@@ -227,7 +227,11 @@ async function main() {
   // understands. Arbitrary TeX and custom templates keep the compiler's final
   // text gate; their macro semantics cannot be inferred from a JSON key.
   let factCheck = { verdict: 'skipped', reason: 'structured fact gate supports bundled LaTeX templates only' };
-  const bundledTemplates = [TEMPLATE_PATH, resolve(__dirname, 'templates', 'cv-template.cjk.tex')];
+  const bundledTemplates = [
+    TEMPLATE_PATH,
+    resolve(__dirname, 'templates', 'cv-template.cjk.tex'),
+    resolve(__dirname, 'templates', 'cv-template.charter.tex'),
+  ];
   if (bundledTemplates.includes(resolve(TEMPLATE_PATH_RESOLVED))) {
     const root = getCareerOpsRoot();
     if (!existsSync(join(root, 'cv.md'))) {
@@ -257,6 +261,9 @@ async function main() {
   const linkedinDisplay = payload.linkedin?.display || '';
   const githubUrl = sanitizeUrl(payload.github?.url || '');
   const githubDisplay = payload.github?.display || '';
+  const portfolioUrl = sanitizeUrl(payload.portfolio?.url || (typeof payload.portfolio === 'string' ? payload.portfolio : '') || '');
+  const portfolioDisplay = payload.portfolio?.display || (portfolioUrl ? 'Portfolio' : '');
+  const portfolioLink = portfolioUrl ? ` $|$ \\href{${escapeLatex(portfolioUrl, 'url')}}{${escapeLatex(portfolioDisplay)}}` : '';
 
   const substitutions = {
     NAME: escapeLatex(payload.name || ''),
@@ -277,6 +284,9 @@ async function main() {
     LINKEDIN_DISPLAY: escapeLatex(linkedinDisplay),
     GITHUB_URL: githubUrl,
     GITHUB_DISPLAY: escapeLatex(githubDisplay),
+    PORTFOLIO_URL: portfolioUrl,
+    PORTFOLIO_DISPLAY: escapeLatex(portfolioDisplay),
+    PORTFOLIO_LINK: portfolioLink,
     EDUCATION: buildEducation(payload.education),
     EXPERIENCE: buildExperience(payload.experience),
     PROJECTS: buildProjects(payload.projects),

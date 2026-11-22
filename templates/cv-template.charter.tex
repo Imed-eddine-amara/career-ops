@@ -1,0 +1,112 @@
+%-------------------------
+% Career-Ops LaTeX CV Template — Charter variant
+% Based on: Bitstream Charter serif typography & compact single-column layout
+% License: MIT
+%------------------------
+
+% career-ops-template
+% name: Charter
+% version: 1.0.0
+
+\documentclass[{{PAPER}},11pt]{article}
+\usepackage[top=0.28in,bottom=0.30in,left=0.50in,right=0.50in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{charter}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\usepackage{enumitem}
+\usepackage{tabularx}
+\usepackage{microtype}
+\input{glyphtounicode}
+\pdfgentounicode=1
+\pagestyle{empty}\raggedright\setlength{\tabcolsep}{0pt}
+
+% Section Titles
+\titleformat{\section}{\bfseries\normalsize}{}{0em}{}[\titlerule]
+\titlespacing{\section}{0pt}{6pt}{3.5pt}
+
+% Lists & Items
+\setlist[itemize]{leftmargin=13pt,itemsep=2pt,topsep=2pt,parsep=0pt,partopsep=0pt}
+\newcommand{\cvitem}[1]{\item {\fontsize{9.8}{11.5}\selectfont #1}}
+\newcommand{\resumeItem}[1]{\cvitem{#1}}
+
+% Subheadings & Projects
+\newcommand{\resumeSubheading}[4]{%
+  \vspace{-2pt}\item
+    \begin{tabular*}{1.0\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & {\small #2} \\
+      {\small\textit{#3}} & {\small\textit{#4}} \\
+    \end{tabular*}\vspace{-3pt}
+}
+
+\newcommand{\resumeSubheadingContinue}[2]{%
+  \vspace{-2pt}
+    \begin{tabular*}{1.0\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      {\small\textit{#1}} & {\small\textit{#2}} \\
+    \end{tabular*}\vspace{-3pt}
+}
+
+\newcommand{\resumeProjectHeading}[2]{%
+  \vspace{-2pt}\item
+    \begin{tabular*}{1.0\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      #1 & {\small\textit{#2}} \\
+    \end{tabular*}\vspace{-3pt}
+}
+
+\newcommand{\role}[3]{\textbf{#1}\hfill {\small #2}\\{\small\textit{#3}}\vspace{-2pt}}
+\newcommand{\project}[2]{\textbf{#1}\hfill {\small\textit{#2}}\vspace{-2pt}}
+\newcommand{\skills}[2]{\noindent\textbf{#1:} {\fontsize{9.6}{11.2}\selectfont #2}\par}
+
+\newcommand{\resumeSubItem}[1]{\resumeItem{#1}\vspace{0pt}}
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.0in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{0pt}}
+
+\begin{document}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%  Heading  %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{center}
+  {\LARGE\textbf{{{NAME}}}}\\[-1pt]
+  {\small {{CONTACT_LINE}} \ $|$ \href{{{EMAIL_URL}}}{{{EMAIL_DISPLAY}}} \ $|$ \href{{{LINKEDIN_URL}}}{LinkedIn} \ $|$ \href{{{GITHUB_URL}}}{GitHub}{{PORTFOLIO_LINK}}%
+  }
+\end{center}
+\vspace{-16pt}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%  Technical Skills  %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Technical Skills}
+\vspace{-3pt}
+\begin{itemize}[leftmargin=0.0in, label={}]\item{
+{\fontsize{9.6}{11.2}\selectfont
+{{SKILLS}}
+}
+}\end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%  Experience  %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Experience}
+  \resumeSubHeadingListStart
+{{EXPERIENCE}}
+  \resumeSubHeadingListEnd
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%  PROJECTS  %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Selected Projects}
+\resumeSubHeadingListStart
+{{PROJECTS}}
+\resumeSubHeadingListEnd
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%  Education  %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Education}
+  \resumeSubHeadingListStart
+{{EDUCATION}}
+  \resumeSubHeadingListEnd
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%  AWARDS  %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\section{Awards \& Honors}
+\resumeSubHeadingListStart
+{{AWARDS}}
+\resumeSubHeadingListEnd
+
+%%%%  END  %%%%
+
+\end{document}

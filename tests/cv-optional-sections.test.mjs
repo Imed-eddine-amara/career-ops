@@ -88,6 +88,7 @@ const TEMPLATES = [
   { file: 'templates/cv-template.modern.html', format: 'html', after: '<!-- END -->', hasCertifications: true, hasCompetencies: true, hasInterests: false },
   { file: 'templates/cv-template.tex', format: 'tex', after: '%%%%  END  %%%%', hasCertifications: false, hasCompetencies: false, hasInterests: false },
   { file: 'templates/cv-template.cjk.tex', format: 'tex', after: '%%%%  END  %%%%', hasCertifications: false, hasCompetencies: false, hasInterests: false },
+  { file: 'templates/cv-template.charter.tex', format: 'tex', after: '%%%%  END  %%%%', hasCertifications: false, hasCompetencies: false, hasInterests: false },
 ];
 
 // --- Coverage guard: no shipped CV template may sit outside the matrix ------
@@ -368,15 +369,25 @@ for (const { file, format, after, hasCertifications, hasCompetencies, hasInteres
   // become a NO-OP — bare header, intact document — never a truncated tail.
   // `after` IS the sentinel literal — reuse it rather than restating it here,
   // so the two can never drift into a weaker substring of each other.
-  const noSentinel = template.replace(after, '');
-  check(`${name}: fixture actually dropped the sentinel`, noSentinel.includes(after), false);
-  const strippedNoSentinel = stripEmptySections(noSentinel, { ...FULL, skills: [] }, format);
-  check(`${name}: no sentinel + empty skills leaves the template untouched (fail-safe)`,
-    strippedNoSentinel === noSentinel, true);
-  check(`${name}: no sentinel + empty skills keeps the closing document skeleton`,
-    strippedNoSentinel.trimEnd().endsWith(closingSkeleton), true);
-  check(`${name}: no sentinel + empty skills keeps {{EXPERIENCE}}`,
-    strippedNoSentinel.includes('{{EXPERIENCE}}'), true);
+  // When Skills is last, dropping the sentinel tests that the strip fails safe
+  // rather than running on to EOF; when Skills sits earlier, it stops at the
+  // following section's marker instead.
+  const isSkillsLast = template.indexOf(skillsMarker) > Math.max(
+    template.indexOf(experienceMarker),
+    template.indexOf(educationMarker),
+    template.indexOf(projectsMarker)
+  );
+  if (isSkillsLast) {
+    const noSentinel = template.replace(after, '');
+    check(`${name}: fixture actually dropped the sentinel`, noSentinel.includes(after), false);
+    const strippedNoSentinel = stripEmptySections(noSentinel, { ...FULL, skills: [] }, format);
+    check(`${name}: no sentinel + empty skills leaves the template untouched (fail-safe)`,
+      strippedNoSentinel === noSentinel, true);
+    check(`${name}: no sentinel + empty skills keeps the closing document skeleton`,
+      strippedNoSentinel.trimEnd().endsWith(closingSkeleton), true);
+    check(`${name}: no sentinel + empty skills keeps {{EXPERIENCE}}`,
+      strippedNoSentinel.includes('{{EXPERIENCE}}'), true);
+  }
 }
 
 // --- Boundary edge cases ---------------------------------------------------
