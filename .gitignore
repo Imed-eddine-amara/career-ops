@@ -151,6 +151,20 @@ plugins.lock
 **/.env*.local
 **/*.tsbuildinfo
 
+# Gmail Integration Credentials & Tokens (PII & Secrets — never commit)
+config/gmail_credentials*.json
+!config/gmail_credentials.example.json
+config/gmail_token.json
+config/signature/
+config/signature/*
+
+# Python Cache & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+scripts/__pycache__/
+.venv/
+
 # Generated
 .resolved-prompt-*
 node_modules
