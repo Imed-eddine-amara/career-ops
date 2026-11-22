@@ -150,12 +150,13 @@ export function grantsWriteCapability(scope) {
  * Assembled here, not in the route, so a guard can assert on the command line
  * that actually ships instead of on source text that can be rewritten around it.
  *
- * @param {{kind: string, prompt: string}} args
+ * @param {{kind: string, prompt: string, resumeId?: string}} args
  * @returns {string[]}
  */
-export function claudeCliArgs({ kind, prompt }) {
+export function claudeCliArgs({ kind, prompt, resumeId }) {
   const scope = toolScopeFor(kind);
   return [
+    ...(resumeId ? ["--resume", resumeId] : []),
     "-p", prompt,
     "--output-format", "stream-json",
     "--verbose",

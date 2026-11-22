@@ -24,6 +24,17 @@ export function mergeScanResults(results, offerCount) {
   const anyNumber = (key) => results.some((r) => typeof r[key] === "number");
   const datasetStatus = {};
   for (const r of results) Object.assign(datasetStatus, r.datasetStatus || {});
+  const scannedCompanies = [];
+  for (const r of results) {
+    if (Array.isArray(r.scannedCompanies)) {
+      scannedCompanies.push(...r.scannedCompanies);
+    }
+  }
+  const nextOffsets = results.map((r) => r.nextOffset).filter((n) => typeof n === "number");
+  const nextOffset = nextOffsets.length ? Math.max(...nextOffsets) : undefined;
+  const offsets = results.map((r) => r.offset).filter((n) => typeof n === "number");
+  const offset = offsets.length ? Math.min(...offsets) : undefined;
+
   return {
     companiesScanned: sum("companiesScanned"),
     unreachable: sum("unreachableBoards"),
@@ -32,6 +43,9 @@ export function mergeScanResults(results, offerCount) {
     capHit: results.some((r) => r.capHit === true),
     datasetStatus,
     ...(anyNumber("postingsDroppedNoDate") ? { postingsDroppedNoDate: sum("postingsDroppedNoDate") } : {}),
+    ...(scannedCompanies.length ? { scannedCompanies } : {}),
+    ...(typeof nextOffset === "number" ? { nextOffset } : {}),
+    ...(typeof offset === "number" ? { offset } : {}),
   };
 }
 

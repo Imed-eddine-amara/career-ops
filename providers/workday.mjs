@@ -346,16 +346,16 @@ export function pageIsPastWindow(pageJobs, sinceMs) {
   return Math.min(...dated) < sinceMs - EARLY_STOP_MARGIN_MS;
 }
 
-// A careers page: `https://{tenant}.{instance}.myworkdayjobs.com[/{locale}]/{site}`.
-const CAREERS_RE = /^https:\/\/([\w-]+)\.(wd[\w-]*)\.myworkdayjobs\.com\/(?:[a-z]{2}-[A-Z]{2}\/)?([^/?#]+)/;
-// The CXS endpoint itself: `https://{host}.{instance}.myworkdayjobs.com/wday/cxs/{tenant}/{site}[/jobs|/job/...]`.
+// A careers page: `https://{tenant}.[{instance}.]myworkdayjobs.com[/{locale}]/{site}`.
+const CAREERS_RE = /^https:\/\/([\w-]+)(?:\.(wd[\w-]*))?\.myworkdayjobs\.com\/(?:[a-z]{2}-[A-Z]{2}\/)?([^/?#]+)/;
+// The CXS endpoint itself: `https://{host}.[{instance}.]myworkdayjobs.com/wday/cxs/{tenant}/{site}[/jobs|/job/...]`.
 // This is the *resolved* form, not a careers page — it already carries the
 // tenant and site in its path. It also passes CAREERS_RE (same host shape),
 // where `([^/?#]+)` captures the literal `wday` as the site and yields a
 // nonexistent `/wday/cxs/{tenant}/wday/jobs` endpoint: a live board silently
 // reports zero jobs and then reads as unreachable (#3498). Matched first so a
 // hand-verified CXS `api:` is honored as written instead of corrupting the entry.
-const CXS_RE = /^https:\/\/([\w-]+)\.(wd[\w-]*)\.myworkdayjobs\.com\/wday\/cxs\/([\w-]+)\/([^/?#]+)(?:\/jobs)?(?:[/?#]|$)/;
+const CXS_RE = /^https:\/\/([\w-]+)(?:\.(wd[\w-]*))?\.myworkdayjobs\.com\/wday\/cxs\/([\w-]+)\/([^/?#]+)(?:\/jobs)?(?:[/?#]|$)/;
 // A myworkdaysite tenant: `https://{instance}.myworkdaysite.com/recruiting/{tenant}/{site}`.
 // Same Workday product, but the tenant lives in the PATH, not the hostname —
 // so neither CAREERS_RE nor CXS_RE matches it and every such board silently
@@ -409,7 +409,10 @@ function resolveEndpoint(entry) {
     const cxs = url.match(CXS_RE);
     if (cxs) {
       const [, host, instance, tenant, site] = cxs;
-      return makeEndpoint(`https://${host}.${instance}.myworkdayjobs.com`, tenant, site, instance);
+      const origin = instance
+        ? `https://${host}.${instance}.myworkdayjobs.com`
+        : `https://${host}.myworkdayjobs.com`;
+      return makeEndpoint(origin, tenant, site, instance || '');
     }
     const siteMatch = url.match(SITE_RE);
     if (siteMatch) {
@@ -419,7 +422,10 @@ function resolveEndpoint(entry) {
     const m = url.match(CAREERS_RE);
     if (!m) continue;
     const [, tenant, instance, site] = m;
-    return makeEndpoint(`https://${tenant}.${instance}.myworkdayjobs.com`, tenant, site, instance);
+    const origin = instance
+      ? `https://${tenant}.${instance}.myworkdayjobs.com`
+      : `https://${tenant}.myworkdayjobs.com`;
+    return makeEndpoint(origin, tenant, site, instance || '');
   }
   return null;
 }

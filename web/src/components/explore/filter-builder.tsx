@@ -15,6 +15,8 @@ const RECENCY = [
   { label: "7d", days: 7 },
   { label: "14d", days: 14 },
   { label: "30d", days: 30 },
+  { label: "60d", days: 60 },
+  { label: "90d", days: 90 },
 ];
 
 const STYLE = `
@@ -262,17 +264,78 @@ export function FilterBuilder({
             <QuoteHint id={QUOTE_HINT_MORE} />
           </div>
           <div>
-            <Label hint={`${filters.limitPerAts} companies / source`}>Scan depth</Label>
+            <Label hint="only search specific employers (comma-separated)">Target specific companies</Label>
+            <KeywordField
+              ariaLabel="Target specific companies"
+              values={filters.companies || []}
+              tone="inc"
+              placeholder="Valeo, NXP, ZembraTech, Continental…"
+              onChange={(v) => set({ companies: v })}
+            />
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <Label hint={filters.limitPerAts === 0 ? "Unlimited (all companies)" : `${filters.limitPerAts} companies / source`}>Scan depth</Label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  max={100000}
+                  value={filters.limitPerAts === 0 ? "" : filters.limitPerAts}
+                  placeholder="All"
+                  onChange={(e) => {
+                    const raw = e.target.value.trim();
+                    if (raw === "" || raw === "0") {
+                      set({ limitPerAts: 0 });
+                    } else {
+                      const n = parseInt(raw, 10);
+                      if (!isNaN(n) && n >= 0) set({ limitPerAts: n });
+                    }
+                  }}
+                  className="w-20 rounded border border-border bg-surface/50 px-2 py-0.5 text-right text-xs font-mono text-foreground"
+                />
+                <span className="text-xs text-muted">per ATS</span>
+              </div>
+            </div>
             <input
               type="range"
               min={50}
-              max={500}
+              max={5000}
               step={50}
-              value={filters.limitPerAts}
+              value={filters.limitPerAts === 0 ? 5000 : Math.min(5000, filters.limitPerAts)}
               aria-label="Scan depth"
               onChange={(e) => set({ limitPerAts: Number(e.target.value) })}
               className="w-full accent-brand"
             />
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {[150, 500, 1000, 2500, 5000].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => set({ limitPerAts: preset })}
+                  className={cn(
+                    "rounded px-2 py-0.5 text-[11px] font-medium border transition-colors",
+                    filters.limitPerAts === preset
+                      ? "border-brand/50 bg-brand-soft text-brand-text"
+                      : "border-border text-muted hover:text-foreground",
+                  )}
+                >
+                  {preset}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => set({ limitPerAts: 0 })}
+                className={cn(
+                  "rounded px-2 py-0.5 text-[11px] font-medium border transition-colors",
+                  filters.limitPerAts === 0
+                    ? "border-brand/50 bg-brand-soft text-brand-text"
+                    : "border-border text-muted hover:text-foreground",
+                )}
+              >
+                All (Uncapped)
+              </button>
+            </div>
           </div>
         </div>
       )}

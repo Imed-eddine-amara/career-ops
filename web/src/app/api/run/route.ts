@@ -14,6 +14,7 @@ import { resolveCodeRoot } from "@/lib/core/code-root.mjs";
 import { dataFolderMissingMessage, unsafeDataRootMessage } from "@/lib/core/data-root.mjs";
 import { resolvePdfPaths, type PdfPaths } from "@/lib/pdf-paths.mjs";
 import { renderAndMarkPdf, writeCvHtml, pdfRunOutcome } from "@/lib/pdf-render.mjs";
+import { buildPdfCorrectionPrompt } from "@/lib/pdf-correction-prompt.mjs";
 import { materializeTailoredCv, withSharedPdfPath } from "@/lib/cv-from-json.mjs";
 import { saveBuiltCv } from "@/lib/pdf-run-save.mjs";
 import { createCvEnvelopeFilter } from "@/lib/cv-envelope.mjs";
@@ -35,20 +36,41 @@ import { readJsonObject } from "@/lib/json-body";
 import { writeEvaluationInstructions } from "@/lib/evaluation-instructions-file.mjs";
 import { spillOversizedPrompt } from "@/lib/oversized-prompt.mjs";
 import { parseEvaluationOptions, selectedEvaluationInstructions } from "@/lib/evaluation-options.mjs";
+import { isBoardUrl, resolveBoardPosting } from "@/lib/core/pipeline-healer-wrapper.mjs";
+import { applyInboxUrlEdit } from "@/lib/inbox-edit.mjs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 800; // a real oferta evaluation / pdf-mode CV tailoring + render is heavy and multi-step
 
 export async function POST(req: Request) {
-  const body = await readJsonObject<{ kind?: string; input?: string; cliId?: string; brief?: unknown; evaluationSections?: unknown; ats?: unknown }>(req);
+  const body = await readJsonObject<{
+    kind?: string;
+    input?: string;
+    cliId?: string;
+    brief?: unknown;
+    evaluationSections?: unknown;
+    ats?: unknown;
+    conversationId?: string;
+    failureReason?: string;
+    attempt?: number;
+  }>(req);
   if (!body) return new Response(JSON.stringify({ error: "bad json" }), { status: 400 });
-  const { kind = "evaluate", input, cliId: requestedCliId, brief } = body;
+  const {
+    kind = "evaluate",
+    input: rawInput,
+    cliId: requestedCliId,
+    brief,
+    conversationId: resumeConversationId,
+    failureReason: resumeFailureReason,
+    attempt: requestedAttempt,
+  } = body;
   const evaluation = kind === "evaluate" ? parseEvaluationOptions(body.evaluationSections) : undefined;
   if (evaluation && !evaluation.ok) return Response.json({ error: evaluation.error }, { status: 400 });
-  if (!input || !requestedCliId) {
+  if (!rawInput || !requestedCliId) {
     return new Response(JSON.stringify({ error: "input and cliId required" }), { status: 400 });
   }
+  let input: string = rawInput;
   let userData: string;
   try {
     userData = careerOpsRoot();
@@ -177,6 +199,35 @@ export async function POST(req: Request) {
     });
   }
 
+  // Auto-resolve board-level URLs if this was an inbox entry
+  if (kind === "evaluate" && input && isBoardUrl(input)) {
+    const inboxJob = readInbox().find((j) => j.url === input);
+    if (inboxJob) {
+      try {
+        const resolved = await resolveBoardPosting(input, inboxJob.role, inboxJob.company);
+        if (resolved?.resolvedUrl) {
+          const oldUrl = input;
+          input = resolved.resolvedUrl;
+          const pipelineFile = path.join(careerOpsRoot(), "data", "pipeline.md");
+          if (fs.existsSync(pipelineFile)) {
+            try {
+              const text = fs.readFileSync(pipelineFile, "utf8");
+              const outcome = applyInboxUrlEdit(text, oldUrl, input);
+              if (outcome.ok) {
+                fs.writeFileSync(`${pipelineFile}.bak`, text, "utf8");
+                fs.writeFileSync(pipelineFile, outcome.text, "utf8");
+              }
+            } catch {
+              // non-fatal
+            }
+          }
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+  }
+
   // Resolve the posting date HERE rather than asking the agent for it. The
   // scanner already wrote it from the provider's own `offer.postedAt`, so this
   // copies a recorded value instead of inviting a guess — and modes/oferta.md is
@@ -216,9 +267,12 @@ export async function POST(req: Request) {
   // the prompt inside the same try so preparation failures release it too. It is
   // taken before the JD prefetch, so a row delete cannot land in that window.
   const writeToken = kind === "evaluate" || kind === "pdf" ? acquireTrackerWrite() : null;
-  let child;
+  let child: ReturnType<typeof spawnHeadlessCli>;
   let instructionFile: ReturnType<typeof writeEvaluationInstructions> | undefined;
   let spill: ReturnType<typeof spillOversizedPrompt> | undefined;
+  const isClaude = cliId === "claude";
+  const atsRequested = body.ats === true;
+  const isResumedPdf = Boolean(resumeConversationId && kind === "pdf" && (spec.resumeArgs || isClaude));
   try {
     // Read the JD here, not in the worker: WebFetch drops script content, so a
     // board that renders its JD from script data looks like an empty shell to the
@@ -241,27 +295,33 @@ export async function POST(req: Request) {
     if (evaluationInstructions) {
       instructionFile = writeEvaluationInstructions(careerOpsRoot(), evaluationInstructions);
     }
-    const prompt = buildPrompt({
-      kind,
-      input,
-      memory: readMemory(),
-      today,
-      postedAt,
-      lang,
-      cvTemplate,
-      userTemplatesDir,
-      pageFormat,
-      // The worker's cwd is the data root; modes, templates and scripts live in the checkout.
-      codeRoot,
-      reportFile: pdfPaths?.reportFile ?? (coverRequest?.ok ? coverRequest.reportFile : undefined),
-      coverBrief: coverRequest?.ok ? coverRequest.brief : undefined,
-      profile: profileRef(careerOpsRoot()),
-      evaluationInstructions: instructionFile?.reference,
-      prefetchedJd,
-      closedEvidence,
-    });
+    const prompt = isResumedPdf
+      ? buildPdfCorrectionPrompt({
+          error: resumeFailureReason || "Previous tailored CV generation failed verification gates.",
+          input,
+          attempt: typeof requestedAttempt === "number" ? requestedAttempt : 6,
+          maxAttempts: (typeof requestedAttempt === "number" ? requestedAttempt : 6) + 1,
+        })
+      : buildPrompt({
+          kind,
+          input,
+          memory: readMemory(),
+          today,
+          postedAt,
+          lang,
+          cvTemplate,
+          userTemplatesDir,
+          pageFormat,
+          // The worker's cwd is the data root; modes, templates and scripts live in the checkout.
+          codeRoot,
+          reportFile: pdfPaths?.reportFile ?? (coverRequest?.ok ? coverRequest.reportFile : undefined),
+          coverBrief: coverRequest?.ok ? coverRequest.brief : undefined,
+          profile: profileRef(careerOpsRoot()),
+          evaluationInstructions: instructionFile?.reference,
+          prefetchedJd,
+          closedEvidence,
+        });
 
-    const isClaude = cliId === "claude";
     // Which tools each kind gets, and the whole claude argv, live in
     // claude-invocation.mjs — see its header for the policy and for why it is asserted on
     // built values rather than on this file's source. NEVER auto-submits; that
@@ -275,8 +335,14 @@ export async function POST(req: Request) {
     // A CLI with its own structured stream gets the argv that turns it on, so its
     // stdout matches spec.parseEvent below; spec.args stays the plain-text argv the
     // envelope-parsing routes rely on.
-    const buildArgs = (p: string) =>
-      isClaude ? claudeCliArgs({ kind, prompt: p }) : (spec.streamArgs ?? spec.args)(p);
+    const buildArgs = (p: string) => {
+      if (isResumedPdf) {
+        return isClaude
+          ? claudeCliArgs({ kind, prompt: p, resumeId: resumeConversationId! })
+          : spec.resumeArgs!(resumeConversationId!, p);
+      }
+      return isClaude ? claudeCliArgs({ kind, prompt: p }) : (spec.streamArgs ?? spec.args)(p);
+    };
     // The prompt inlines the whole _profile.md (#4003), so it can outgrow the OS
     // command-line limit (ENAMETOOLONG on Windows). Every kind that reaches here
     // can Read (see TOOL_SCOPES), so an oversized prompt goes to a file under the
@@ -366,6 +432,9 @@ export async function POST(req: Request) {
       };
       let lastTokens = 0; // per-run token cost from the CLI's structured usage event (#6) — local only
       let lastCostUsd: number | null = null;
+      let capturedConversationId: string | null = resumeConversationId || null;
+      let attempt = isResumedPdf && typeof requestedAttempt === "number" ? requestedAttempt : 1;
+      const maxAttempts = kind === "pdf" ? (isResumedPdf ? attempt + 1 : 5) : 1;
       // pdf-mode's agent only tailors content now (rendering moved to the
       // backend, #2172) — but its killMs still has to leave real headroom
       // inside the route's overall maxDuration (800s): the render+mark phase
@@ -416,6 +485,13 @@ export async function POST(req: Request) {
       const fencing = fencingReport({ cliId, cliName: spec.name, capabilities: capabilitiesFor(kind) });
       if (fencing.notice) send({ type: "status", label: fencing.notice });
       if (substitution) send({ type: "status", label: substitution });
+      if (isResumedPdf) {
+        send({ type: "status", label: `Self-correcting CV (attempt ${attempt} of ${maxAttempts})…` });
+        send({
+          type: "text",
+          text: `\n🔄 Resuming agent session to self-correct (attempt ${attempt} of ${maxAttempts})...\n\n`,
+        });
+      }
       // Time-based keepalive. The stream is silent whenever the agent is thinking
       // or inside a long tool call, and in pdf mode it is silent for the whole
       // 15-25 KB <<cv-html>> envelope (cvFilter swallows every byte). Measured
@@ -439,7 +515,7 @@ export async function POST(req: Request) {
       // pdf's CV arrives inline in a <<cv-html>> envelope (#2185); evaluate's
       // report arrives in a <<report-md>> envelope. The filter keeps every byte
       // for the backend while holding the body out of the run log.
-      const cvFilter = kind === "pdf" ? createCvEnvelopeFilter() : null;
+      let cvFilter = kind === "pdf" ? createCvEnvelopeFilter() : null;
       const reportFilter = kind === "evaluate" ? createReportEnvelopeFilter() : null;
       // Assistant-authored text only, before report-body filtering. Tools/JDs
       // cannot directly declare a gated outcome. Process integrity is checked
@@ -476,10 +552,13 @@ export async function POST(req: Request) {
       // Shared with the close-time flush below, so a final JSONL line the CLI never
       // newline-terminates before exiting isn't dropped along with the usage event
       // it carries.
-      const joinAgentText = createAgentTextJoiner();
+      let joinAgentText = createAgentTextJoiner();
       const processParsedLine = (line: string) => {
         if (!spec.parseEvent) return;
         const ev = spec.parseEvent(line);
+        if (ev?.conversationId) {
+          capturedConversationId = ev.conversationId;
+        }
         const text = joinAgentText(ev);
         if (text) {
           emittedText = true;
@@ -501,35 +580,103 @@ export async function POST(req: Request) {
         }
       };
 
-      child.stdout.on("data", (chunk: string) => {
-        if (closed) return;
-        if (!spec.parseEvent) {
-          emittedText = true;
-          sendAgentText(chunk);
-          return;
+      const canRetryPdf = () =>
+        kind === "pdf" &&
+        attempt < maxAttempts &&
+        Boolean(capturedConversationId) &&
+        Boolean(spec.resumeArgs || isClaude) &&
+        !closed;
+
+      function retryPdf(failureReason: string) {
+        attempt++;
+        send({ type: "status", label: `Self-correcting CV (attempt ${attempt} of ${maxAttempts})…` });
+        send({
+          type: "text",
+          text: `\n\n⚠️ PDF verification failed:\n${failureReason.slice(0, 400)}\n🔄 Re-feeding error into agent session to self-correct (attempt ${attempt} of ${maxAttempts})...\n\n`,
+        });
+
+        cvFilter = createCvEnvelopeFilter();
+        buf = "";
+        emittedText = false;
+        sawError = false;
+        stderrBuf = "";
+        stderrErrorSnippet = null;
+        joinAgentText = createAgentTextJoiner();
+
+        const correctionPrompt = buildPdfCorrectionPrompt({
+          error: failureReason,
+          input,
+          attempt,
+          maxAttempts,
+        });
+
+        const buildResumeArgs = (p: string) =>
+          isClaude
+            ? claudeCliArgs({ kind, prompt: p, resumeId: capturedConversationId! })
+            : spec.resumeArgs!(capturedConversationId!, p);
+
+        try {
+          const retrySpill = spillOversizedPrompt({
+            prompt: correctionPrompt,
+            buildArgs: buildResumeArgs,
+            binPath,
+            fencing: { cliId, capabilities },
+            root: careerOpsRoot(),
+          });
+          child = spawnHeadlessCli(
+            binPath,
+            retrySpill.args,
+            { cwd: careerOpsRoot(), env: process.env },
+            { cliId, capabilities },
+          );
+          if (retrySpill.cleanup) child.once("close", retrySpill.cleanup);
+          finishRun.setActiveChild?.(child);
+          child.stdout.setEncoding("utf8");
+          child.stderr.setEncoding("utf8");
+          bindChildListeners(child);
+        } catch (err) {
+          send({
+            type: "error",
+            msg: `Failed to spawn self-correction attempt: ${err instanceof Error ? err.message : String(err)}`,
+          });
+          close();
         }
-        buf += chunk;
-        let nl: number;
-        while ((nl = buf.indexOf("\n")) !== -1) {
-          const line = buf.slice(0, nl).trim();
-          buf = buf.slice(nl + 1);
-          if (line) processParsedLine(line);
-        }
-      });
-      child.stderr.on("data", (chunk: string) => {
-        // Match on COMPLETE lines. A chunk boundary can fall mid-word, so testing a
-        // raw chunk both misses an error split across two of them and can match a
-        // fragment that is not the word it looks like. The captured snippet only
-        // supplies message text for whichever failure the close handler already
-        // decided on — it never sets sawError itself (see flagStderrLine above).
-        stderrBuf += chunk;
-        let nl;
-        while ((nl = stderrBuf.indexOf("\n")) !== -1) {
-          const line = stderrBuf.slice(0, nl);
-          stderrBuf = stderrBuf.slice(nl + 1);
-          flagStderrLine(line);
-        }
-      });
+      }
+
+      function bindChildListeners(c: ReturnType<typeof spawnHeadlessCli>) {
+        c.stdout.on("data", (chunk: string) => {
+          if (closed) return;
+          if (!spec.parseEvent) {
+            emittedText = true;
+            sendAgentText(chunk);
+            return;
+          }
+          buf += chunk;
+          let nl: number;
+          while ((nl = buf.indexOf("\n")) !== -1) {
+            const line = buf.slice(0, nl).trim();
+            buf = buf.slice(nl + 1);
+            if (line) processParsedLine(line);
+          }
+        });
+        c.stderr.on("data", (chunk: string) => {
+          stderrBuf += chunk;
+          let nl: number;
+          while ((nl = stderrBuf.indexOf("\n")) !== -1) {
+            const line = stderrBuf.slice(0, nl);
+            stderrBuf = stderrBuf.slice(nl + 1);
+            flagStderrLine(line);
+          }
+        });
+        c.on("error", (e: Error) => {
+          send({ type: "error", msg: e.message });
+          close();
+        });
+        c.on("close", (code: number | null) => {
+          handleChildClose(code);
+        });
+      }
+
       // Render + mark-tracker-ready live in pdf-render.mjs (plain, dependency-
       // injected, unit-tested) so the render-then-mark orchestration isn't
       // buried untested inside this transport-layer closure. Runs generate-
@@ -570,6 +717,7 @@ export async function POST(req: Request) {
           close();
         }
       };
+
       const renderPdf = async (paths: PdfPaths, format: "letter" | "a4", ats?: { html: string; finalPdf: string } | null) => {
         send({ type: "status", label: "Rendering PDF…" });
         try {
@@ -584,22 +732,32 @@ export async function POST(req: Request) {
             ats,
           });
           if (result.kind === "render-failed") {
-            send({ type: "error", msg: result.error.slice(0, 1500) });
+            if (canRetryPdf()) {
+              retryPdf(result.error);
+              return;
+            }
+            send({
+              type: "error",
+              msg: result.error.slice(0, 1500),
+              conversationId: capturedConversationId ?? undefined,
+              attempts: attempt,
+              failureReason: result.error,
+            });
+            close();
             return;
           }
           // Non-fatal issues (a defaulted page format, a tracker row not marked) still
           // surface here rather than only in a server log nobody sees.
           sendWarnings(result.warnings);
           send({ type: "done", tokens: lastTokens, costUsd: lastCostUsd });
+          close();
         } catch (e) {
           send({ type: "error", msg: `PDF rendering crashed unexpectedly: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200) });
-        } finally {
           close();
         }
       };
 
-      child.on("error", (e) => { send({ type: "error", msg: e.message }); close(); });
-      child.on("close", (code) => {
+      function handleChildClose(code: number | null) {
         // A trailing line with no newline would otherwise never be tested.
         if (stderrBuf) { flagStderrLine(stderrBuf); stderrBuf = ""; }
         // A disconnected client must not start a new PDF render. Still finish
@@ -653,19 +811,32 @@ export async function POST(req: Request) {
             hasPaths: pdfPaths !== undefined,
           });
           if (!outcome.ok) {
-            send({ type: "error", msg: outcome.message });
+            if (canRetryPdf() && !noOutputMessage()) {
+              retryPdf(outcome.message);
+              return;
+            }
+            send({
+              type: "error",
+              msg: outcome.message,
+              conversationId: capturedConversationId ?? undefined,
+              attempts: attempt,
+              failureReason: outcome.message,
+            });
+            return close();
           } else if (!pdfPaths || envelope?.ok !== true) {
             // Unreachable: pdfRunOutcome validated both via hasPaths/envelope.ok.
             // Kept for narrowing, but it must REPORT rather than fall through to a
             // bare close() — a stream that ends with neither error nor done is the
             // one outcome this handler exists to prevent.
             send({ type: "error", msg: "Internal error: the pdf run passed its gate with no CV to save — please report this." });
+            return close();
           } else {
             sendWarnings(envelope.warnings);
             // Tracked so cancel() can defer releasing writeToken until this
             // settles. close() happens once rendering finishes, not here.
             pdfRenderPromise = withSharedPdfPath(pdfPaths.html, async () => {
               let scratchDir = "";
+              let shouldClose = true;
               try {
                 // The profile outranks the agent's pick, and auto maps the
                 // country it named, both through the core (core/page-format.mjs).
@@ -688,16 +859,32 @@ export async function POST(req: Request) {
                       reportFile: pdfPaths.reportFile,
                       htmlPath: pdfPaths.html,
                       finalPdf: pdfPaths.finalPdf,
-                      ats: body.ats === true,
+                      ats: atsRequested,
                     });
                     if (built.ok && built.scratchDir) scratchDir = built.scratchDir;
                     return built;
                   },
                   isClosed: () => closed,
-                  onError: (error) => send({ type: "error", msg: error.slice(0, 200) }),
+                  onError: (error) => {
+                    if (canRetryPdf()) {
+                      shouldClose = false;
+                      retryPdf(error);
+                    } else {
+                      send({
+                        type: "error",
+                        msg: error.slice(0, 1500),
+                        conversationId: capturedConversationId ?? undefined,
+                        attempts: attempt,
+                        failureReason: error,
+                      });
+                    }
+                  },
                   onWarnings: sendWarnings,
                   save: (built) => saveCv(pdfPaths, { html: built.html }),
-                  render: (built) => renderPdf(pdfPaths, sheet.format, built.ats),
+                  render: async (built) => {
+                    shouldClose = false;
+                    await renderPdf(pdfPaths, sheet.format, built.ats);
+                  },
                 });
               } catch (e) {
                 send({ type: "error", msg: `PDF rendering crashed unexpectedly: ${e instanceof Error ? e.message : String(e)}`.slice(0, 200) });
@@ -710,7 +897,7 @@ export async function POST(req: Request) {
                 } catch {
                   // The run already reported its outcome. A leftover scratch dir is the smaller failure.
                 } finally {
-                  close();
+                  if (shouldClose) close();
                 }
               }
             });
@@ -760,7 +947,9 @@ export async function POST(req: Request) {
           send({ type: "done", tokens: lastTokens, costUsd: lastCostUsd });
         }
         close();
-      });
+      }
+
+      bindChildListeners(child);
     },
     cancel() {
       closed = true;

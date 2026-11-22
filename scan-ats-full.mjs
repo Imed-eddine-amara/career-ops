@@ -77,6 +77,7 @@ import bamboohr from './providers/bamboohr.mjs';
 import paylocity, { boardUrl as paylocityBoardUrl } from './providers/paylocity.mjs';
 import join, { parseCompanySitemap } from './providers/join.mjs';
 import { loadWorkableFeed, WORKABLE_FEED_URL } from './providers/workable.mjs';
+import pfeBooksProvider, { loadPfeBooksDataset } from './providers/pfe_books.mjs';
 import { openProviderIdCache, PROVIDER_ID_CACHE_DIR } from './provider-id-cache.mjs';
 import { decodeEntities } from './providers/_html-entities.mjs';
 import { buildTitleFilter, buildTitleFilterOverrides, buildTitleFilterWithOverrides, buildLocationFilter, buildContentFilterOrExit, matchedTitleKeywords, loadSeenUrls, scanHistoryPolicy, seenJobKey, appendToPipeline, appendToScanHistory, findBlacklistEntry, loadBlacklist, parseSinceDays, BROWSER_PROCESS_ENV, DATA_ROOT as SCAN_DATA_ROOT, PORTALS_PATH, PIPELINE_PATH, SCAN_HISTORY_PATH } from './scan.mjs';
@@ -640,6 +641,14 @@ export const SOURCES = {
       ? { name: row.company, ...(row.website ? { website: row.website } : {}), jobs: Array.isArray(row.jobs) ? row.jobs : [] }
       : null),
   },
+  pfe_books: {
+    provider: pfeBooksProvider,
+    singleHost: true,
+    loadDataset: async () => loadPfeBooksDataset(),
+    toEntry: (row) => (row && typeof row.company === 'string' && row.company
+      ? { name: row.company, ...(row.website ? { website: row.website } : {}), jobs: Array.isArray(row.jobs) ? row.jobs : [] }
+      : null),
+  },
 };
 
 // ── CLI args ────────────────────────────────────────────────────────
@@ -648,11 +657,12 @@ const KNOWN_FLAGS = [
   '--since', '--limit', '--ats', '--seeds', '--history-seeds', '--probe-unknown-hosts', '--dry-run', '--liveness',
   '--verbose', '--md-out', '--json', '--include-undated', '--include-blacklisted',
   '--shuffle', '--resume', '--resume-if-compatible', '--help', '-h',
+  '--offset', '--companies',
 ];
 
 // Flags that consume the next argv token as a value (space-separated form —
 // the `--flag=value` form is self-contained and never needs this).
-const VALUE_FLAGS = ['--since', '--limit', '--ats', '--seeds', '--md-out'];
+const VALUE_FLAGS = ['--since', '--limit', '--ats', '--seeds', '--md-out', '--offset', '--companies'];
 
 const USAGE = `Usage:
   node scan-ats-full.mjs                      # scan all ATS directories, last 3 days
@@ -739,6 +749,22 @@ export function parseArgs(argv) {
     }
     limit = Number(raw);
   }
+  let offset = 0;
+  if (hasFlag(args, '--offset')) {
+    const raw = String(flagValue(args, '--offset') ?? '').trim();
+    if (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))) {
+      console.error(`Error: --offset expects a non-negative whole number, got ${raw ? `"${raw}"` : 'no value'}`);
+      process.exit(1);
+    }
+    offset = Number(raw);
+  }
+  let companies = null;
+  if (hasFlag(args, '--companies')) {
+    const raw = String(flagValue(args, '--companies') ?? '').trim();
+    if (raw) {
+      companies = raw.split(',').map(c => c.trim().toLowerCase()).filter(Boolean);
+    }
+  }
   const atsArg = valueOf('--ats');
   if (hasFlag(args, '--ats')) {
     const listed = String(atsArg ?? '').split(',').map(s => s.trim()).filter(Boolean);
@@ -786,6 +812,8 @@ export function parseArgs(argv) {
   return {
     sinceDays,
     limit,
+    offset,
+    companies,
     ats,
     atsExplicit: Boolean(atsArg),
     historySeeds,
@@ -1302,12 +1330,25 @@ export function providerForSource(source) {
 }
 
 // Cap-aware company sampling. Default: the dataset's natural (alphabetical)
-// prefix. With --shuffle: a random sample of `limit` companies, so a capped
-// scan isn't always biased to the same alphabetical-first slice. Pure; returns
-// a new array and never mutates `list`.
-export function sampleCompanies(list, limit, shuffle = false) {
-  if (!shuffle || limit >= list.length) return list.slice(0, limit);
-  const copy = list.slice();
+// prefix. With --offset: deterministic slice pagination.
+// With --companies: filters to targeted companies.
+// With --shuffle: a random sample of `limit` companies.
+// Pure; returns a new array and never mutates `list`.
+export function sampleCompanies(list, limit, shuffle = false, offset = 0, companiesFilter = null) {
+  let filtered = list;
+  if (Array.isArray(companiesFilter) && companiesFilter.length > 0) {
+    const targets = companiesFilter.map(c => String(c).toLowerCase().trim()).filter(Boolean);
+    filtered = list.filter(item => {
+      const name = typeof item === 'string' ? item : (item?.company || item?.name || '');
+      const lower = String(name).toLowerCase();
+      return targets.some(t => lower.includes(t));
+    });
+  }
+  if (offset > 0) {
+    return filtered.slice(offset, offset + limit);
+  }
+  if (!shuffle || limit >= filtered.length) return filtered.slice(0, limit);
+  const copy = filtered.slice();
   for (let i = copy.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [copy[i], copy[j]] = [copy[j], copy[i]];
@@ -1961,6 +2002,7 @@ async function main() {
   const completedSources = new Set(checkpoint?.completedSources || []);
   const cc = checkpoint?.counters || {};
   let totalCompaniesScanned = cc.totalCompaniesScanned || 0;
+  const allScannedCompanies = [];
   let totalCompaniesAvailable = 0;
   let totalErrors = cc.totalErrors || 0;
   let totalRetiredBoardsSkipped = cc.totalRetiredBoardsSkipped || 0;
@@ -2090,6 +2132,9 @@ async function main() {
             domainGatedBoards,
             domainGatedPostings,
             saved,
+            scannedCompanies: allScannedCompanies,
+            nextOffset: (opts.offset || 0) + (opts.limit === Infinity ? 0 : opts.limit),
+            offset: opts.offset || 0,
             offers: partial,
           }) + '\n', () => process.exit(0));
         } catch {
@@ -2205,7 +2250,12 @@ async function main() {
     // A source that restarts on resume never compares fingerprints, and its
     // list carries every kept posting, so it is not hashed.
     const datasetHash = source.restartOnResume ? null : datasetFingerprint(list);
-    const entriesAll = sampleCompanies(list, opts.limit, opts.shuffle).map(source.toEntry).filter(Boolean);
+    const sampled = sampleCompanies(list, opts.limit, opts.shuffle, opts.offset, opts.companies);
+    const entriesAll = sampled.map(source.toEntry).filter(Boolean);
+    for (const item of sampled) {
+      const cName = typeof item === 'string' ? item : (item?.company || item?.name);
+      if (cName) allScannedCompanies.push(String(cName));
+    }
 
     let startAt = 0;
     if (checkpoint && checkpoint.current?.name === name && source.restartOnResume) {
@@ -2647,6 +2697,9 @@ async function main() {
       domainGatedPostings,
       dnsPacing: { delayed: pacing.delayed, waitedMs: Math.round(pacing.waitedMs) },
       saved,
+      scannedCompanies: allScannedCompanies,
+      nextOffset: (opts.offset || 0) + (opts.limit === Infinity ? 0 : opts.limit),
+      offset: opts.offset || 0,
       offers: offers.map(o => ({
         company: o.company,
         title: o.title,

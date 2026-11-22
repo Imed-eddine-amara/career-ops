@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Compass, ChevronDown, RotateCcw, AlertTriangle, Sparkles, Settings } from "lucide-react";
+import { Compass, ChevronDown, RotateCcw, AlertTriangle, Sparkles, Settings, X, ArrowRight, Eye } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/cn";
 import { pageFrameWidthClass } from "@/components/page-frame";
@@ -43,7 +43,33 @@ export function ExplorerView({
   evaluated: { n: string; company: string; role: string; url?: string }[];
   rootExists: boolean;
 }) {
-  const { filters, setFilters, initFilters, phase, running, offers, discover, loadFresh, status, employerOutcome, error, scannerMissing, mode, setMode, aiIntent, setAiIntent, discoverAI, companiesScanned, companiesAvailable, capHit, droppedNoDate, partial } = useExplore();
+  const {
+    filters,
+    setFilters,
+    initFilters,
+    phase,
+    running,
+    offers,
+    discover,
+    loadFresh,
+    status,
+    employerOutcome,
+    error,
+    scannerMissing,
+    mode,
+    setMode,
+    aiIntent,
+    setAiIntent,
+    discoverAI,
+    companiesScanned,
+    companiesAvailable,
+    capHit,
+    droppedNoDate,
+    partial,
+    scannedCompaniesList,
+    scanNextSlice,
+  } = useExplore();
+  const [showSearchedModal, setShowSearchedModal] = useState(false);
   const scanNote =
     companiesScanned > 0
       ? `Scanned ${companiesScanned.toLocaleString()}${companiesAvailable > companiesScanned ? ` of ${companiesAvailable.toLocaleString()}` : ""} compan${companiesScanned === 1 ? "y" : "ies"}${partial ? " · some sources were unreachable" : ""}.`
@@ -202,7 +228,13 @@ export function ExplorerView({
           )}
 
           {isResults && capHit && (
-            <CappedBanner companiesScanned={companiesScanned} companiesAvailable={companiesAvailable} onRefine={() => setRefineOpen(true)} />
+            <CappedBanner
+              companiesScanned={companiesScanned}
+              companiesAvailable={companiesAvailable}
+              onRefine={() => setRefineOpen(true)}
+              onScanNext={scanNextSlice}
+              onViewSearched={scannedCompaniesList.length ? () => setShowSearchedModal(true) : undefined}
+            />
           )}
         </>
       )}
@@ -246,6 +278,8 @@ export function ExplorerView({
           {!employerOutcome && phase === "degraded" && (
             <DegradedCard
               onRetry={() => void discover()}
+              onScanNext={scanNextSlice}
+              onViewSearched={scannedCompaniesList.length ? () => setShowSearchedModal(true) : undefined}
               companiesScanned={companiesScanned}
               companiesAvailable={companiesAvailable}
               capHit={capHit}
@@ -256,6 +290,11 @@ export function ExplorerView({
           {!employerOutcome && phase === "failed" && <FailedCard msg={error || status} scannerMissing={scannerMissing} onRetry={() => void discover()} />}
         </>
       )}
+      <ScannedCompaniesModal
+        open={showSearchedModal}
+        onClose={() => setShowSearchedModal(false)}
+        companies={scannedCompaniesList}
+      />
     </div>
   );
 }
@@ -301,6 +340,8 @@ function EmptyState({ tone, title, body, note, onRerun, rerunLabel }: { tone: "g
 
 function DegradedCard({
   onRetry,
+  onScanNext,
+  onViewSearched,
   companiesScanned,
   companiesAvailable,
   capHit,
@@ -308,6 +349,8 @@ function DegradedCard({
   partial,
 }: {
   onRetry: () => void;
+  onScanNext?: () => void;
+  onViewSearched?: () => void;
   companiesScanned: number;
   companiesAvailable: number;
   capHit: boolean;
@@ -322,7 +365,7 @@ function DegradedCard({
     "The public ATS directories didn’t respond — usually a transient network hiccup or rate-limit, so nothing could be searched. This isn’t “all caught up”; a retry in a moment usually clears it.";
   if (companiesScanned > 0 && capHit) {
     title = "No matches in the slice we searched.";
-    body = `The scan is capped, so it only searched ${companiesScanned.toLocaleString()}${companiesAvailable > companiesScanned ? ` of ${companiesAvailable.toLocaleString()}` : ""} companies — not the whole network. Raise scan depth (Refine search) or narrow your roles, then re-cast to look deeper.`;
+    body = `The scan is capped, so it only searched ${companiesScanned.toLocaleString()}${companiesAvailable > companiesScanned ? ` of ${companiesAvailable.toLocaleString()}` : ""} companies — not the whole network. Raise scan depth (Refine search) or scan the next batch of companies.`;
   } else if (companiesScanned > 0 && droppedNoDate > 0) {
     title = "Fresh-looking roles were skipped for missing dates.";
     body = `${droppedNoDate.toLocaleString()} posting${droppedNoDate === 1 ? "" : "s"} matched but had no clear publish date, so the freshness filter dropped them. Widening the time window often brings dated equivalents back.`;
@@ -335,25 +378,116 @@ function DegradedCard({
       <AlertTriangle className="mx-auto size-6 text-amber-500" />
       <p className="mt-2 text-sm font-medium text-foreground">{title}</p>
       <p className="mx-auto mt-1 max-w-md text-[13px] text-muted">{body}</p>
-      <button onClick={onRetry} className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-brand-soft px-3 py-1.5 text-sm font-medium text-brand-text">
-        <RotateCcw className="size-4" /> Retry the scan
-      </button>
+      <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+        <button onClick={onRetry} className="inline-flex items-center gap-1.5 rounded-md bg-brand-soft px-3.5 py-2 text-sm font-medium text-brand-text hover:bg-brand-soft/80 transition-colors">
+          <RotateCcw className="size-4" /> Retry same slice
+        </button>
+        {onScanNext && capHit && (
+          <button onClick={onScanNext} className="inline-flex items-center gap-1.5 rounded-md bg-brand px-3.5 py-2 text-sm font-medium text-brand-foreground hover:brightness-110 transition-colors">
+            Scan Next Slice <ArrowRight className="size-4" />
+          </button>
+        )}
+        {onViewSearched && (
+          <button onClick={onViewSearched} className="inline-flex items-center gap-1.5 rounded-md border border-border px-3.5 py-2 text-sm font-medium text-muted hover:text-foreground transition-colors">
+            <Eye className="size-4" /> View searched companies ({companiesScanned})
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
-function CappedBanner({ companiesScanned, companiesAvailable, onRefine }: { companiesScanned: number; companiesAvailable: number; onRefine: () => void }) {
+function CappedBanner({
+  companiesScanned,
+  companiesAvailable,
+  onRefine,
+  onScanNext,
+  onViewSearched,
+}: {
+  companiesScanned: number;
+  companiesAvailable: number;
+  onRefine: () => void;
+  onScanNext?: () => void;
+  onViewSearched?: () => void;
+}) {
   // Results ARE present, but the scan was capped — tell the user there's more, so a
   // partial list never reads as "everything there is".
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] px-4 py-2.5 text-[13px]">
-      <span className="text-foreground">
-        Showing a capped slice — searched {companiesScanned.toLocaleString()}
-        {companiesAvailable > companiesScanned ? ` of ${companiesAvailable.toLocaleString()}` : ""} companies.
-      </span>
-      <button onClick={onRefine} className="font-medium text-brand-text hover:underline">
-        Raise scan depth to search deeper
-      </button>
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] px-4 py-2.5 text-[13px]">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-foreground">
+          Showing a capped slice — searched {companiesScanned.toLocaleString()}
+          {companiesAvailable > companiesScanned ? ` of ${companiesAvailable.toLocaleString()}` : ""} companies.
+        </span>
+        <button onClick={onRefine} className="font-medium text-brand-text hover:underline">
+          Raise scan depth
+        </button>
+        {onViewSearched && (
+          <button onClick={onViewSearched} className="font-medium text-muted hover:text-foreground underline">
+            View searched companies
+          </button>
+        )}
+      </div>
+      {onScanNext && (
+        <button
+          onClick={onScanNext}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-brand-foreground hover:brightness-110 transition-colors"
+        >
+          Scan Next Slice <ArrowRight className="size-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ScannedCompaniesModal({
+  open,
+  onClose,
+  companies,
+}: {
+  open: boolean;
+  onClose: () => void;
+  companies: string[];
+}) {
+  const [query, setQuery] = useState("");
+  if (!open) return null;
+  const filtered = query.trim()
+    ? companies.filter((c) => c.toLowerCase().includes(query.toLowerCase()))
+    : companies;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+      <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-2xl border border-border bg-surface shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border p-4">
+          <div>
+            <h3 className="font-semibold text-foreground">Searched Companies ({companies.length})</h3>
+            <p className="text-xs text-muted">Employers probed during this discovery search</p>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-muted hover:bg-surface-hover hover:text-foreground">
+            <X className="size-5" />
+          </button>
+        </div>
+        <div className="p-3 border-b border-border">
+          <input
+            type="text"
+            placeholder="Filter companies..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="w-full rounded-lg border border-border bg-surface-hover/50 px-3 py-1.5 text-sm outline-none focus:border-brand/50 text-foreground"
+          />
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-1">
+          {filtered.length === 0 ? (
+            <p className="text-center text-sm text-muted py-6">No matching company names found</p>
+          ) : (
+            filtered.map((name, i) => (
+              <div key={i} className="flex items-center justify-between rounded-lg px-2.5 py-1.5 text-sm hover:bg-surface-hover">
+                <span className="font-medium text-foreground">{name}</span>
+                <span className="text-xs text-faint">#{i + 1}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
     </div>
   );
 }

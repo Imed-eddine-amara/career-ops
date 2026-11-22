@@ -153,7 +153,7 @@ export async function renderTemplatePreview(codeRoot, name, kind = "cv", { userD
       execFile(
         process.execPath,
         [path.join(codeRoot, "build-cv-html.mjs"), input, output, templatePath],
-        { cwd: codeRoot, timeout: PREVIEW_TIMEOUT_MS, windowsHide: true },
+        { cwd: codeRoot, timeout: PREVIEW_TIMEOUT_MS, windowsHide: true, env: { ...process.env, CAREER_OPS_ROOT: dir } },
         (err, _out, stderr) => (err ? reject(new Error(stderr.trim() || err.message)) : resolve(undefined)),
       );
     });

@@ -7,13 +7,42 @@
 export type EmployerSource = "tencent" | "bytedance" | "meituan";
 export type DiscoverySource = AtsSource | EmployerSource;
 export type EmployerScanOutcome = { state: "complete" | "partial" | "failed"; message: string };
-export type AtsSource = "greenhouse" | "lever" | "ashby" | "workday";
-export const ATS_SOURCES: AtsSource[] = ["greenhouse", "lever", "ashby", "workday"];
+export type AtsSource =
+  | "greenhouse"
+  | "lever"
+  | "ashby"
+  | "workday"
+  | "icims"
+  | "bamboohr"
+  | "paylocity"
+  | "join"
+  | "workable"
+  | "pfe_books";
+
+export const ATS_SOURCES: AtsSource[] = [
+  "greenhouse",
+  "lever",
+  "ashby",
+  "workday",
+  "icims",
+  "bamboohr",
+  "paylocity",
+  "join",
+  "workable",
+  "pfe_books",
+];
+
 export const ATS_LABEL: Record<AtsSource, string> = {
   greenhouse: "Greenhouse",
   lever: "Lever",
   ashby: "Ashby",
   workday: "Workday",
+  icims: "iCIMS",
+  bamboohr: "BambooHR",
+  paylocity: "Paylocity",
+  join: "Join.com",
+  workable: "Workable",
+  pfe_books: "PFE Books (Tunisia & Remote)",
 };
 
 /** The full UI filter state. The keyword/location lists mirror scan.mjs's
@@ -31,6 +60,8 @@ export type ExploreFilters = {
   sinceDays: number;
   ats: AtsSource[];
   limitPerAts: number;
+  offset?: number;
+  companies?: string[];
 };
 
 export const DEFAULT_FILTERS: ExploreFilters = {
@@ -107,6 +138,9 @@ export type ScanEvent =
       capHit?: boolean;
       datasetStatus?: Record<string, "ok" | "stale" | "empty">;
       postingsDroppedNoDate?: number;
+      scannedCompanies?: string[];
+      nextOffset?: number;
+      offset?: number;
       // Sources whose results are missing (ran out of time or crashed) while the
       // others finished — a partial result, never "all caught up".
       incomplete?: string[];
@@ -166,10 +200,16 @@ export function parseExplorePatch(
     const incoming = cleanChips(raw[key]);
     next[field] = (merge ? cleanChips([...(base[field] as string[]), ...incoming]) : incoming) as never;
   }
-  if (raw.since !== undefined) next.sinceDays = clampNum(raw.since, 1, 60, base.sinceDays);
-  if (raw.sinceDays !== undefined) next.sinceDays = clampNum(raw.sinceDays, 1, 60, base.sinceDays);
-  if (raw.limit !== undefined) next.limitPerAts = clampNum(raw.limit, 50, 500, base.limitPerAts);
-  if (raw.limitPerAts !== undefined) next.limitPerAts = clampNum(raw.limitPerAts, 50, 500, base.limitPerAts);
+  if (raw.since !== undefined) next.sinceDays = clampNum(raw.since, 1, 90, base.sinceDays);
+  if (raw.sinceDays !== undefined) next.sinceDays = clampNum(raw.sinceDays, 1, 90, base.sinceDays);
+  const parseLimit = (v: unknown): number => {
+    if (v === "all" || v === "uncapped" || v === "unlimited" || v === 0 || v === "0") return 0;
+    return clampNum(v, 0, 100000, base.limitPerAts);
+  };
+  if (raw.limit !== undefined) next.limitPerAts = parseLimit(raw.limit);
+  if (raw.limitPerAts !== undefined) next.limitPerAts = parseLimit(raw.limitPerAts);
+  if (raw.offset !== undefined) next.offset = clampNum(raw.offset, 0, 100000, 0);
+  if (raw.companies !== undefined) next.companies = cleanChips(raw.companies);
   if (raw.ats !== undefined) next.ats = cleanAts(raw.ats);
   return next;
 }
@@ -192,6 +232,8 @@ export function filtersToParams(f: ExploreFilters): string {
   if (f.sinceDays !== DEFAULT_FILTERS.sinceDays) sp.set("since", String(f.sinceDays));
   if (f.ats.length !== ATS_SOURCES.length) sp.set("ats", f.ats.join(","));
   if (f.limitPerAts !== DEFAULT_FILTERS.limitPerAts) sp.set("limit", String(f.limitPerAts));
+  if (f.companies && f.companies.length) sp.set("companies", f.companies.join(","));
+  if (typeof f.offset === "number" && f.offset > 0) sp.set("offset", String(f.offset));
   return sp.toString();
 }
 
@@ -210,6 +252,8 @@ export function paramsToFilters(sp: URLSearchParams, base: ExploreFilters = DEFA
       since: sp.get("since") ?? undefined,
       ats: split(sp.get("ats")),
       limit: sp.get("limit") ?? undefined,
+      companies: split(sp.get("companies")),
+      offset: sp.get("offset") ?? undefined,
     },
     base,
   );

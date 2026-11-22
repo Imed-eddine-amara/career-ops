@@ -771,10 +771,17 @@ export function AssistantConsole() {
     try {
       await flushChat();
       reachedAssistant = true;
+      const currentChatId = activeChat.current.id ||= crypto.randomUUID();
       const res = await fetch("/api/assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, cliId, history, pageContext: describePage(pathname) + pipelineContext() + applyContext() }),
+        body: JSON.stringify({
+          chatId: currentChatId,
+          message: text,
+          cliId,
+          history,
+          pageContext: describePage(pathname) + pipelineContext() + applyContext(),
+        }),
       });
       if (!res.ok || !res.body) {
         failed = true;

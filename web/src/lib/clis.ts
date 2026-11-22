@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { codexStreamArgs, isFatalClaudeStderr, isFatalCodexStderr, parseClaudeEvent, parseCodexEvent, parseGrokEvent } from "./run-cli-support.mjs";
+import { codexStreamArgs, isFatalClaudeStderr, isFatalCodexStderr, parseAntigravityEvent, parseClaudeEvent, parseCodexEvent, parseGrokEvent } from "./run-cli-support.mjs";
 import { installedCliIds, pickUsableCli } from "./cli-pick.mjs";
 import { careerOpsRoot } from "./career-ops";
 import { readRememberedCli } from "./remembered-cli.mjs";
@@ -27,6 +27,8 @@ export type CliSpec = {
    * `--output-format stream-json`). Pairing one CLI's parser with a plain-text
    * invocation yields a silent stream of unparseable lines. */
   streamArgs?: (prompt: string) => string[];
+  /** Resume an existing multi-turn conversation session when self-correcting or continuing. */
+  resumeArgs?: (conversationId: string, prompt: string) => string[];
   /** Structured-output CLIs only: parse one stdout line into dashboard events.
    * Absent → the route streams stdout as raw text (the default for every CLI
    * without its own structured output format). */
@@ -60,14 +62,14 @@ export type CliSpec = {
  * lives in a comment is a rule the next contributor may never read.
  */
 export const KNOWN: CliSpec[] = [
-  { id: "claude", name: "Claude Code", bin: "claude", run: "claude -p", url: "https://claude.ai/code", args: (p) => ["-p", p], parseEvent: parseClaudeEvent, stderrIsFatal: isFatalClaudeStderr },
+  { id: "claude", name: "Claude Code", bin: "claude", run: "claude -p", url: "https://claude.ai/code", args: (p) => ["-p", p], resumeArgs: (convId, p) => ["--resume", convId, "-p", p], parseEvent: parseClaudeEvent, stderrIsFatal: isFatalClaudeStderr },
   { id: "codex", name: "Codex", bin: "codex", run: "codex exec", url: "https://github.com/openai/codex", args: (p) => ["exec", p], streamArgs: codexStreamArgs, parseEvent: parseCodexEvent, stderrIsFatal: isFatalCodexStderr },
   { id: "gemini", name: "Gemini CLI", bin: "gemini", run: "gemini -p", url: "https://github.com/google-gemini/gemini-cli", args: (p) => ["-p", p] },
   { id: "opencode", name: "OpenCode", bin: "opencode", run: "opencode run", url: "https://opencode.ai", args: (p) => ["run", p] },
   { id: "pi", name: "Pi", bin: "pi", run: "pi -p", url: "https://github.com/earendil-works/pi", args: (p) => ["--no-session", "-p", p] },
   { id: "copilot", name: "GitHub Copilot CLI", bin: "copilot", run: "copilot -p", url: "https://docs.github.com/en/copilot/github-copilot-in-the-cli", args: (p) => ["-p", p] },
   { id: "qwen", name: "Qwen CLI", bin: "qwen", run: "qwen -p", url: "https://qwen.ai/qwencode", args: (p) => ["-p", p] },
-  { id: "antigravity", name: "Antigravity CLI", bin: "agy", run: "agy -p", url: "https://antigravity.google", args: (p) => ["-p", p] },
+  { id: "antigravity", name: "Antigravity CLI", bin: "agy", run: "agy -p", url: "https://antigravity.google", args: (p) => ["-p", p, "--effort", "low"], streamArgs: (p) => ["-p", p, "--output-format", "stream-json", "--effort", "low"], resumeArgs: (convId, p) => ["--conversation", convId, "-p", p, "--output-format", "stream-json", "--effort", "low"], parseEvent: parseAntigravityEvent },
   // Grok Build speaks its own `--output-format streaming-json` schema, not
   // Claude's `stream-json`. It has a parser of its own now, so it streams
   // structured like the other two rather than falling through to raw stdout —

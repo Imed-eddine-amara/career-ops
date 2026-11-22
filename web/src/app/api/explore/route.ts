@@ -11,8 +11,9 @@ import { readJsonObject } from "@/lib/json-body";
 
 // Discovery is HTTP-bound across many ATS boards; give it room. It is FREE —
 // zero LLM tokens (the scanner only does HTTP + JSON, and --dry-run writes nothing).
+// Set maxDuration high (24h) to support overnight uncapped sweeps across all 69k+ companies.
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 86400;
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {

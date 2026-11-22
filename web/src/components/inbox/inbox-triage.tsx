@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Undo2 } from "lucide-react";
+import { Undo2, Plus, Sparkles, Loader2, Check, X } from "lucide-react";
 import { evaluationGateForJob } from "@/lib/job-gate.mjs";
 import { useJobs } from "@/components/jobs/job-store";
 import type { InboxJob } from "@/lib/career-ops";
@@ -10,6 +10,8 @@ import type { AtsSource } from "@/lib/explore";
 import { ATS_SOURCES } from "@/lib/explore";
 import { daysSince, seniorityFromTitle, sourceFromUrl, SENIORITY_ORDER, type Seniority } from "@/lib/inbox";
 import { LinkedInPaste } from "@/components/linkedin-paste";
+import { InboxAddDialog } from "./inbox-add-dialog";
+import { InboxEditDialog } from "./inbox-edit-dialog";
 import { orderInbox } from "@/lib/core/inbox-rank.mjs";
 import { cursorAfterRemoval, inboxCommand, moveCursor, selectionWithout, typingFromTarget } from "@/lib/inbox-keys.mjs";
 import { inboxScoreTarget, skippableJobs } from "@/lib/inbox-score-target.mjs";
@@ -73,6 +75,10 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
   const [restoring, setRestoring] = useState(false);
   const [hasCli, setHasCli] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [showAddDialog, setShowAddDialog] = useState(false);
+  const [editingJob, setEditingJob] = useState<InboxJob | null>(null);
+  const [healing, setHealing] = useState(false);
+  const [healNotice, setHealNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const saved = readInboxSort(browserStorage());
@@ -271,6 +277,75 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
     setUndo(notice);
     void actions.skip();
   };
+
+  const handleDiscard = async (job: InboxJob) => {
+    setWriteError("");
+    setSelected((current) => selectionWithout(current, job.url));
+    setHidden((h) => (h.includes(job.url) ? h : [...h, job.url]));
+    try {
+      const res = await fetch("/api/inbox/discard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: job.url,
+          company: job.company,
+          role: job.role,
+          reason: "Discarded from inbox",
+        }),
+      });
+      if (!res.ok) throw new Error("Discard failed");
+      router.refresh();
+      setUndo({
+        label: `Moved ${job.company} to Discarded panel`,
+        fn: async () => {
+          await fetch("/api/inbox/add", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              urls: [job.url],
+              company: job.company,
+              role: job.role,
+              location: job.location,
+            }),
+          });
+          setHidden((h) => h.filter((u) => u !== job.url));
+          router.refresh();
+        },
+      });
+    } catch {
+      setWriteError(`Could not discard ${job.company}. Please try again.`);
+      setHidden((h) => h.filter((u) => u !== job.url));
+    }
+  };
+
+  const handleHealPipeline = async () => {
+    if (healing) return;
+    setHealing(true);
+    setHealNotice(null);
+    try {
+      const res = await fetch("/api/pipeline/heal", { method: "POST" });
+      const data = await res.json();
+      if (res.ok && data) {
+        const healedCount = data.healed?.length || 0;
+        const expiredCount = data.expired?.length || 0;
+        const emptyCount = data.empty?.length || 0;
+        let msg = "Pipeline audit complete!";
+        if (healedCount > 0 || expiredCount > 0 || emptyCount > 0) {
+          msg = `Audited: ${healedCount} links healed, ${expiredCount} expired postings archived${emptyCount > 0 ? `, ${emptyCount} empty stubs flagged` : ""}.`;
+        } else {
+          msg = `All ${data.total || 0} links verified — no broken or board links found!`;
+        }
+        setHealNotice(msg);
+        router.refresh();
+      } else {
+        setHealNotice(data.error || "Heal check failed.");
+      }
+    } catch {
+      setHealNotice("Network error during pipeline heal.");
+    } finally {
+      setHealing(false);
+    }
+  };
   const restoreHidden = async () => {
     if (restoreRunning.current) return;
     restoreRunning.current = true;
@@ -425,7 +500,7 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
         <p className="text-sm font-medium text-foreground">
           {anyFacet ? `${filtered.length} match${filtered.length === 1 ? "" : "es"}` : capped ? (sortMode === "newest" ? "Fresh — worth a look" : "Best fits") : "All roles"}
         </p>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
           <div role="group" aria-label="Sort inbox" className="flex items-center gap-2 text-xs">
             <button type="button" aria-pressed={sortMode === "fit"} onClick={() => { setSortMode("fit"); setDefaultSaveFailed(false); }} className={cn("inline-flex items-center hover:text-foreground max-sm:min-h-[44px] max-sm:min-w-[44px] max-sm:justify-center", sortMode === "fit" ? "font-medium text-foreground" : "text-faint")}>Best fit</button>
             <button type="button" aria-pressed={sortMode === "newest"} onClick={() => { setSortMode("newest"); setDefaultSaveFailed(false); }} className={cn("inline-flex items-center hover:text-foreground max-sm:min-h-[44px] max-sm:min-w-[44px] max-sm:justify-center", sortMode === "newest" ? "font-medium text-foreground" : "text-faint")}>Newest</button>
@@ -440,6 +515,22 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
             </button>
             {defaultSaveFailed && <span role="status" className="text-red-700 dark:text-red-400">Can’t save in this browser</span>}
           </div>
+          <button
+            type="button"
+            onClick={() => setShowAddDialog(true)}
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-foreground hover:bg-surface-hover hover:border-brand/40 transition-colors"
+          >
+            <Plus className="size-3.5 text-brand-text" /> Add Jobs
+          </button>
+          <button
+            type="button"
+            disabled={healing}
+            onClick={handleHealPipeline}
+            className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-foreground hover:bg-surface-hover hover:border-brand/40 transition-colors disabled:opacity-50"
+          >
+            {healing ? <Loader2 className="size-3.5 animate-spin text-brand-text" /> : <Sparkles className="size-3.5 text-brand-text" />}
+            Heal Links
+          </button>
           {hiddenCount > 0 && (
             <button type="button" onClick={() => void restoreHidden()} disabled={restoring} aria-busy={restoring} className="text-xs text-faint transition-colors hover:text-foreground disabled:opacity-50 max-sm:min-h-[44px]">
               {hiddenCount} hidden · {restoring ? "restoring…" : "restore"}
@@ -464,6 +555,19 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
         </div>
       )}
 
+      {/* heal notice banner */}
+      {healNotice && (
+        <div className="mt-3 flex items-center justify-between rounded-xl bg-brand-soft/60 border border-brand/30 px-4 py-2.5 text-xs text-foreground">
+          <span className="flex items-center gap-2">
+            <Sparkles className="size-4 text-brand-text shrink-0" />
+            {healNotice}
+          </span>
+          <button type="button" onClick={() => setHealNotice(null)} className="p-1 hover:text-brand-text">
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
+
       {visible.length > 0 ? (
         <ul className="mt-3 divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface/40">
           {visible.map((e, index) => (
@@ -481,6 +585,8 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
               onToggleSelect={() => toggleSelect(e.job.url)}
               onSave={() => save(e.job)}
               onSkip={() => skip(e.job)}
+              onEdit={() => setEditingJob(e.job)}
+              onDiscard={() => handleDiscard(e.job)}
             />
           ))}
         </ul>
@@ -555,6 +661,9 @@ export function InboxTriage({ inbox }: { inbox: InboxJob[] }) {
         onClear={() => setShortlist([])}
         onScore={scoreShortlist}
       />
+
+      <InboxAddDialog isOpen={showAddDialog} onClose={() => setShowAddDialog(false)} />
+      <InboxEditDialog job={editingJob} isOpen={editingJob !== null} onClose={() => setEditingJob(null)} />
     </div>
   );
 }

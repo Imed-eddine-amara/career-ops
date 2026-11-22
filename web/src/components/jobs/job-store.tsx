@@ -35,9 +35,24 @@ export type Job = {
   reportN?: number | null;
   startedAt: number;
   endedAt?: number;
+  conversationId?: string;
+  attempts?: number;
+  lastFailureReason?: string;
 };
 
-type StartOpts = { title: string; subtitle?: string; kind: string; input: string; page?: string; batchId?: string; brief?: Record<string, string>; evaluationSections?: string[] };
+type StartOpts = {
+  title: string;
+  subtitle?: string;
+  kind: string;
+  input: string;
+  page?: string;
+  batchId?: string;
+  brief?: Record<string, string>;
+  evaluationSections?: string[];
+  conversationId?: string;
+  failureReason?: string;
+  attempt?: number;
+};
 
 type Ctx = {
   jobs: Job[];
@@ -209,7 +224,12 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
           let doneCostUsd: number | null = null;
           let doneReportN: number | null = null;
           let finished = false;
-          const finish = (status: "done" | "error" | "gated", lastLabel?: string, gate?: JobGate) => {
+          const finish = (
+            status: "done" | "error" | "gated",
+            lastLabel?: string,
+            gate?: JobGate,
+            extra?: { conversationId?: string; attempts?: number; lastFailureReason?: string },
+          ) => {
             if (finished) return;
             finished = true;
             feedback.current?.push({ ...job, status });
@@ -223,6 +243,9 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
               cost,
               reportN: doneReportN,
               endedAt: Date.now(),
+              conversationId: extra?.conversationId ?? j.conversationId,
+              attempts: extra?.attempts ?? j.attempts,
+              lastFailureReason: extra?.lastFailureReason ?? (status === "error" ? lastLabel : j.lastFailureReason),
               steps: lastLabel ? [...j.steps, { kind: "status", label: lastLabel, ts: Date.now() }] : j.steps,
             }));
             // persist a readable log file so the CLI/assistant can read past runs
@@ -244,7 +267,16 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
             const res = await fetch("/api/run", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ kind: opts.kind, input: opts.input, cliId, brief: opts.brief, evaluationSections: opts.evaluationSections }),
+              body: JSON.stringify({
+                kind: opts.kind,
+                input: opts.input,
+                cliId,
+                brief: opts.brief,
+                evaluationSections: opts.evaluationSections,
+                conversationId: opts.conversationId,
+                failureReason: opts.failureReason,
+                attempt: opts.attempt,
+              }),
             });
             if (!res.ok || !res.body) {
               const e = await res.json().catch(() => ({}));
@@ -267,7 +299,11 @@ export function JobsProvider({ children }: { children: React.ReactNode }) {
               }
             });
             if (completion.status === "error") {
-              finish("error", completion.message);
+              finish("error", completion.message, undefined, {
+                conversationId: completion.conversationId,
+                attempts: completion.attempts,
+                lastFailureReason: completion.failureReason || completion.message,
+              });
               return;
             }
             doneTokens = completion.tokens ?? 0;

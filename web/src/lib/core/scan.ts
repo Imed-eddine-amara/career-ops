@@ -157,6 +157,9 @@ type ScanJson = {
   postingsDroppedNoDate?: number;
   unreachableBoards?: number;
   stoppedEarly?: boolean;
+  scannedCompanies?: string[];
+  nextOffset?: number;
+  offset?: number;
   offers?: JsonOffer[];
 };
 
@@ -201,7 +204,14 @@ function runScanner(
   return new Promise((resolve) => {
     const args = [
       rootScript("scan-ats-full"),
-      ...scannerArgs({ ats, json: useJson, sinceDays: filters.sinceDays, limitPerAts: filters.limitPerAts }),
+      ...scannerArgs({
+        ats,
+        json: useJson,
+        sinceDays: filters.sinceDays,
+        limitPerAts: filters.limitPerAts,
+        offset: filters.offset,
+        companies: filters.companies,
+      }),
     ];
 
     const child = spawn(process.execPath, args, {
@@ -232,28 +242,30 @@ function runScanner(
     const settle = (run: ScannerRun) => {
       if (settled) return;
       settled = true;
-      clearTimeout(killer);
+      if (killer) clearTimeout(killer);
       if (hardKiller) clearTimeout(hardKiller);
       resolve(run);
     };
 
-    const killer = setTimeout(() => {
-      timedOut = true;
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        /* ignore */
-      }
-      // Grace period: if the child can't flush its partial JSON and exit, force it
-      // so a wedged scan can't hold the request open to the route's maxDuration.
-      hardKiller = setTimeout(() => {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-          /* ignore */
-        }
-      }, 5_000);
-    }, timeoutMs);
+    const killer = timeoutMs > 0 && Number.isFinite(timeoutMs)
+      ? setTimeout(() => {
+          timedOut = true;
+          try {
+            child.kill("SIGTERM");
+          } catch {
+            /* ignore */
+          }
+          // Grace period: if the child can't flush its partial JSON and exit, force it
+          // so a wedged scan can't hold the request open to the route's maxDuration.
+          hardKiller = setTimeout(() => {
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              /* ignore */
+            }
+          }, 5_000);
+        }, timeoutMs)
+      : undefined;
 
     // Live progress (atsStart / progress / atsDone) — in --json mode these human
     // lines arrive on STDERR; in legacy mode on STDOUT (handled inside handleLine).
@@ -382,6 +394,8 @@ export async function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEve
   // Read once per run: every child gets the same budget, and the copy quotes it
   // exactly (a 1.5s budget must not read as 2s).
   const timeoutMs = readScanTimeoutMs();
+  // An uncapped scan (limitPerAts === 0) disables the timeout so overnight sweeps run to completion.
+  const effectiveTimeoutMs = filters.limitPerAts === 0 ? 0 : timeoutMs;
   const deadlineSec = timeoutMs / 1000;
   const roleTargets = loadProfileTargets();
   const label = (a: string) => ATS_LABEL[a as AtsSource] ?? a;
@@ -394,7 +408,7 @@ export async function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEve
       // Older checkouts: one child, human-stdout parse. It streams offers as they
       // arrive, so the ones collected so far are returned; a deadline kill still
       // says so instead of ending silently.
-      const run = await runScanner(ats, false, filters, tempPortals, onEvent, sink, timeoutMs, roleTargets);
+      const run = await runScanner(ats, false, filters, tempPortals, onEvent, sink, effectiveTimeoutMs, roleTargets);
       if (run.failed) onEvent({ kind: "error", message: run.failed });
       else if (run.timedOut) onEvent({ kind: "error", message: scanTimeoutMessage(timeoutMs) });
       return sink.offers;
@@ -404,7 +418,7 @@ export async function runDiscovery(filters: ExploreFilters, onEvent: (e: ScanEve
     // Dry runs write no scanner state and each source caches its own dataset
     // file, so the children don't contend.
     const runs = await Promise.all(
-      ats.map((a) => runScanner([a], true, filters, tempPortals, onEvent, sink, timeoutMs, roleTargets)),
+      ats.map((a) => runScanner([a], true, filters, tempPortals, onEvent, sink, effectiveTimeoutMs, roleTargets)),
     );
 
     const { offers, seen } = sink;

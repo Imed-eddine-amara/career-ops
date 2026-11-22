@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Bookmark, BookmarkCheck, Loader2, X, CirclePause } from "lucide-react";
+import { Bookmark, BookmarkCheck, Loader2, X, CirclePause, Pencil, Trash2, Ban } from "lucide-react";
 import type { InboxJob } from "@/lib/career-ops";
 import type { AtsSource } from "@/lib/explore";
 import { ATS_LABEL } from "@/lib/explore";
@@ -38,6 +38,9 @@ export function TriageRow({
   onToggleSelect,
   onSave,
   onSkip,
+  onEdit,
+  onDelete,
+  onDiscard,
 }: {
   index: number;
   cursor: boolean;
@@ -51,6 +54,9 @@ export function TriageRow({
   onToggleSelect: () => void;
   onSave: () => void;
   onSkip: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  onDiscard?: () => void;
 }) {
   const ago = agoLabel(age);
   const target = inboxScoreTarget(scored);
@@ -103,12 +109,34 @@ export function TriageRow({
         </p>
       </div>
 
-      {/* EVALUADA state (right-aligned, visually distinct from raw rows) */}
+      {/* Action controls */}
       {scored?.needsReview ? (
         <div className="flex shrink-0 items-center gap-1">
           <Link href={`/jobs/${scored.jobId}`} className="flex items-center gap-1.5 text-xs text-amber-800 dark:text-amber-400">
             <CirclePause className="size-3.5" /> Needs review
           </Link>
+          {onEdit && (
+            <button
+              type="button"
+              onClick={onEdit}
+              title="Edit URL — change link and recheck"
+              aria-label={`Edit URL for ${job.company} ${job.role}`}
+              className="inline-flex items-center justify-center rounded-md p-1 text-faint transition-colors hover:bg-surface-hover hover:text-foreground max-sm:min-h-[44px] max-sm:min-w-[44px]"
+            >
+              <Pencil className="size-3.5" />
+            </button>
+          )}
+          {(onDiscard || onDelete) && (
+            <button
+              type="button"
+              onClick={onDiscard || onDelete}
+              title="Discard — move to Discarded panel (prevents appearing in future searches)"
+              aria-label={`Discard ${job.company} ${job.role}`}
+              className="inline-flex items-center justify-center rounded-md p-1 text-faint transition-colors hover:bg-surface-hover hover:text-red-500 max-sm:min-h-[44px] max-sm:min-w-[44px]"
+            >
+              <Ban className="size-3.5" />
+            </button>
+          )}
           <button
             type="button"
             onClick={onSkip}
@@ -120,18 +148,31 @@ export function TriageRow({
           </button>
         </div>
       ) : evaluated && target.href ? (
-        <Link href={target.href} className="flex shrink-0 items-center gap-1.5 text-xs">
-          {scored!.running ? (
-            <>
-              <Loader2 className="size-3.5 animate-spin text-brand-text" />
-              <span className="text-brand-text max-sm:hidden">Scoring…</span>
-            </>
-          ) : target.showScore ? (
-            <Badge tone={scored!.tone}>{scored!.score}/5</Badge>
-          ) : (
-            <span className="text-brand-text">Report</span>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <Link href={target.href} className="flex shrink-0 items-center gap-1.5 text-xs">
+            {scored!.running ? (
+              <>
+                <Loader2 className="size-3.5 animate-spin text-brand-text" />
+                <span className="text-brand-text max-sm:hidden">Scoring…</span>
+              </>
+            ) : target.showScore ? (
+              <Badge tone={scored!.tone}>{scored!.score}/5</Badge>
+            ) : (
+              <span className="text-brand-text">Report</span>
+            )}
+          </Link>
+          {(onDiscard || onDelete) && (
+            <button
+              type="button"
+              onClick={onDiscard || onDelete}
+              title="Discard — move to Discarded panel (prevents appearing in future searches)"
+              aria-label={`Discard ${job.company} ${job.role}`}
+              className="inline-flex items-center justify-center rounded-md p-1 text-faint transition-colors hover:bg-surface-hover hover:text-red-500 max-sm:min-h-[44px] max-sm:min-w-[44px]"
+            >
+              <Ban className="size-3.5" />
+            </button>
           )}
-        </Link>
+        </div>
       ) : (
         <div className="flex shrink-0 items-center gap-1">
           <button
@@ -147,6 +188,28 @@ export function TriageRow({
             {shortlisted ? <BookmarkCheck className="size-4" /> : <Bookmark className="size-4" />}
             <span className="max-sm:hidden">{shortlisted ? "Saved" : "Save"}</span>
           </button>
+          {onEdit && (
+            <button
+              type="button"
+              onClick={onEdit}
+              title="Edit URL — change link and recheck"
+              aria-label={`Edit URL for ${job.company} ${job.role}`}
+              className="inline-flex items-center justify-center rounded-md p-1 text-faint transition-colors hover:bg-surface-hover hover:text-foreground max-sm:min-h-[44px] max-sm:min-w-[44px]"
+            >
+              <Pencil className="size-3.5" />
+            </button>
+          )}
+          {(onDiscard || onDelete) && (
+            <button
+              type="button"
+              onClick={onDiscard || onDelete}
+              title="Discard — move to Discarded panel (prevents appearing in future searches)"
+              aria-label={`Discard ${job.company} ${job.role}`}
+              className="inline-flex items-center justify-center rounded-md p-1 text-faint transition-colors hover:bg-surface-hover hover:text-red-500 max-sm:min-h-[44px] max-sm:min-w-[44px]"
+            >
+              <Ban className="size-3.5" />
+            </button>
+          )}
           <button
             type="button"
             onClick={onSkip}

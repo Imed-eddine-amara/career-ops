@@ -2631,20 +2631,14 @@ async function generatePDF() {
   // still in place. Deciding from the rendered content covers both, and running
   // it before the reorder and the guard means they judge the document that will
   // actually be printed. A CV with nothing empty comes through unchanged.
-  html = stripEmptyRenderedSections(html);
-
-  // Apply the user's declared section order (config/profile.yml `cv.sections`)
-  // before the guard runs, so the guard judges the document that will be
-  // printed. Anchored to workspaceRoot, NOT __dirname: readStyleTokens() reads
-  // the same file from workspaceRoot, and cv.md is read from there too, so an
-  // __dirname anchor made CAREER_OPS_TRACKER split one logical profile across
-  // two files — style from the workspace, section order from the checkout —
-  // and validated the workspace's CV against the checkout's declared order.
-  html = reorderCvSections(html, readCvSectionOrder(workspaceProfilePath()));
-
-  validateCvSectionOrder(html, cvMarkdown, { allowReorder });
-  validateCvExperienceOrder(html, { allowNonChronological });
-  validateLockedSections(html, cvMarkdown, readLockedSections(workspaceProfilePath(), sectionKey));
+  const resolvedKind = resolveArtifactKind(kindFlag, outputPath).kind;
+  if (resolvedKind === 'cv') {
+    html = stripEmptyRenderedSections(html);
+    html = reorderCvSections(html, readCvSectionOrder(workspaceProfilePath()));
+    validateCvSectionOrder(html, cvMarkdown, { allowReorder });
+    validateCvExperienceOrder(html, { allowNonChronological });
+    validateLockedSections(html, cvMarkdown, readLockedSections(workspaceProfilePath(), sectionKey));
+  }
 
   const rawHtml = html;
   // Normalize text for ATS compatibility (issue #1)

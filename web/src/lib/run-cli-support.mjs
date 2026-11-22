@@ -27,7 +27,7 @@ import {
  * distinguishable from the number alone, and guessing wrong is silent: summing
  * totals over-counts, and overwriting deltas under-counts. Absent means delta,
  * which is what Codex and Claude send.
- * @typedef {{status?: string, tool?: string, text?: string, tokens?: number, tokensAreTotal?: boolean, costUsd?: number | null, error?: string}} ParsedEvent
+ * @typedef {{status?: string, tool?: string, text?: string, tokens?: number, tokensAreTotal?: boolean, costUsd?: number | null, error?: string, conversationId?: string}} ParsedEvent
  */
 
 const STATUS_READY = "Agent ready";
@@ -273,7 +273,7 @@ export function parseClaudeEvent(line) {
   }
 
   if (ev.type === "system" && ev.subtype === "init") {
-    return { status: STATUS_READY };
+    return { status: STATUS_READY, ...(typeof ev.session_id === "string" ? { conversationId: ev.session_id } : {}) };
   }
 
   if (ev.type === "result") {
@@ -281,6 +281,7 @@ export function parseClaudeEvent(line) {
     // were spent either way, and dropping them undercounts exactly the runs a
     // user most wants to see the cost of.
     const result = {};
+    if (typeof ev.session_id === "string") result.conversationId = ev.session_id;
     if (ev.usage) {
       // Addition here, subtraction for Codex — see the header note. This shared
       // helper keeps the per-run total identical to /api/usage.
@@ -381,6 +382,60 @@ export function parseGrokEvent(line) {
   }
 
   return null;
+}
+
+/**
+ * Convert one Antigravity CLI `--output-format stream-json` line into a ParsedEvent.
+ * @param {string} line
+ * @returns {ParsedEvent | null}
+ */
+export function parseAntigravityEvent(line) {
+  let ev;
+  try {
+    ev = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (!ev || typeof ev !== "object") return null;
+
+  const convId = typeof ev.conversation_id === "string"
+    ? ev.conversation_id
+    : (typeof ev.step_update?.conversation_id === "string"
+      ? ev.step_update.conversation_id
+      : (typeof ev.result?.conversation_id === "string" ? ev.result.conversation_id : undefined));
+
+  if (ev.event === "init") {
+    return { status: STATUS_READY, ...(convId ? { conversationId: convId } : {}) };
+  }
+
+  if (ev.event === "step_update") {
+    const su = ev.step_update;
+    if (su?.step_type === "tool" && su.state === "ACTIVE" && typeof su.tool_name === "string") {
+      return { tool: su.tool_name, ...(convId ? { conversationId: convId } : {}) };
+    }
+    if (su?.step_type === "agent_response" && typeof su.text_delta === "string" && su.text_delta) {
+      return { text: su.text_delta, ...(convId ? { conversationId: convId } : {}) };
+    }
+    if (su?.usage && typeof su.usage === "object") {
+      const u = su.usage;
+      const fresh = Math.max(0, tokenCount(u.input_tokens) - tokenCount(u.cache_read_tokens));
+      return { tokens: fresh + tokenCount(u.output_tokens), tokensAreTotal: false, ...(convId ? { conversationId: convId } : {}) };
+    }
+  }
+
+  if (ev.event === "result") {
+    const res = ev.result;
+    if (res?.usage && typeof res.usage === "object") {
+      const u = res.usage;
+      const fresh = Math.max(0, tokenCount(u.input_tokens) - tokenCount(u.cache_read_tokens));
+      return { tokens: fresh + tokenCount(u.output_tokens), tokensAreTotal: true, ...(convId ? { conversationId: convId } : {}) };
+    }
+    if (convId) {
+      return { conversationId: convId };
+    }
+  }
+
+  return convId ? { conversationId: convId } : null;
 }
 
 /**

@@ -8,9 +8,10 @@
  *
  * @param {{ once: (event: string, listener: () => void) => unknown }} child
  * @param {() => void} release
- * @returns {() => void}
+ * @returns {(() => void) & { setActiveChild?: (c: any) => void }}
  */
 export function createRunFinalizer(child, release) {
+  let activeChild = child;
   let workerClosed = false;
   let runFinished = false;
   let released = false;
@@ -22,13 +23,27 @@ export function createRunFinalizer(child, release) {
     }
   };
 
-  child.once("close", () => {
-    workerClosed = true;
-    releaseIfFinished();
-  });
+  const hookChild = (c) => {
+    workerClosed = false;
+    c.once("close", () => {
+      if (c === activeChild) {
+        workerClosed = true;
+        releaseIfFinished();
+      }
+    });
+  };
 
-  return () => {
+  hookChild(child);
+
+  const finalizer = () => {
     runFinished = true;
     releaseIfFinished();
   };
+
+  finalizer.setActiveChild = (nextChild) => {
+    activeChild = nextChild;
+    hookChild(nextChild);
+  };
+
+  return finalizer;
 }

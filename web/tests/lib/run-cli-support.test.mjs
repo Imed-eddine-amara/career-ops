@@ -22,6 +22,7 @@ import {
   parseClaudeEvent,
   parseCodexEvent,
   parseGrokEvent,
+  parseAntigravityEvent,
 } from "../../src/lib/run-cli-support.mjs";
 import { createCvEnvelopeFilter } from "../../src/lib/cv-envelope.mjs";
 
@@ -508,6 +509,110 @@ test("Grok survives its own JSON.parse successes (null, bare scalars) and garbag
   assert.equal(parseGrokEvent("42"), null);
   assert.equal(parseGrokEvent('"a string"'), null);
   assert.equal(parseGrokEvent("{not json"), null);
+});
+
+// --- Antigravity CLI (--output-format stream-json) ------------------------
+
+test("Antigravity init event yields ready status and captures conversation_id", () => {
+  const line = JSON.stringify({
+    event: "init",
+    conversation_id: "conv-12345",
+    timestamp: "2026-11-16T22:00:00Z",
+  });
+  assert.deepEqual(parseAntigravityEvent(line), {
+    status: "Agent ready",
+    conversationId: "conv-12345",
+  });
+});
+
+test("Antigravity tool step_update maps active tool and propagates conversationId", () => {
+  const line = JSON.stringify({
+    event: "step_update",
+    conversation_id: "conv-12345",
+    step_update: {
+      step_type: "tool",
+      state: "ACTIVE",
+      tool_name: "Bash",
+    },
+  });
+  assert.deepEqual(parseAntigravityEvent(line), {
+    tool: "Bash",
+    conversationId: "conv-12345",
+  });
+});
+
+test("Antigravity agent_response step_update yields text delta", () => {
+  const line = JSON.stringify({
+    event: "step_update",
+    conversation_id: "conv-12345",
+    step_update: {
+      step_type: "agent_response",
+      text_delta: "Evaluating candidate profile...",
+    },
+  });
+  assert.deepEqual(parseAntigravityEvent(line), {
+    text: "Evaluating candidate profile...",
+    conversationId: "conv-12345",
+  });
+});
+
+test("Antigravity step_update usage subtracts cache_read_tokens from input", () => {
+  const line = JSON.stringify({
+    event: "step_update",
+    conversation_id: "conv-12345",
+    step_update: {
+      usage: {
+        input_tokens: 1000,
+        cache_read_tokens: 800,
+        output_tokens: 50,
+      },
+    },
+  });
+  // (1000 - 800) + 50 = 250
+  assert.deepEqual(parseAntigravityEvent(line), {
+    tokens: 250,
+    tokensAreTotal: false,
+    conversationId: "conv-12345",
+  });
+});
+
+test("Antigravity result event yields total tokens and conversationId", () => {
+  const line = JSON.stringify({
+    event: "result",
+    conversation_id: "conv-12345",
+    result: {
+      usage: {
+        input_tokens: 5000,
+        cache_read_tokens: 4500,
+        output_tokens: 200,
+      },
+    },
+  });
+  // (5000 - 4500) + 200 = 700
+  assert.deepEqual(parseAntigravityEvent(line), {
+    tokens: 700,
+    tokensAreTotal: true,
+    conversationId: "conv-12345",
+  });
+});
+
+test("Antigravity result event without usage yields conversationId", () => {
+  const line = JSON.stringify({
+    event: "result",
+    conversation_id: "conv-12345",
+  });
+  assert.deepEqual(parseAntigravityEvent(line), {
+    conversationId: "conv-12345",
+  });
+});
+
+test("Antigravity unparseable or irrelevant lines return null or convId only", () => {
+  assert.equal(parseAntigravityEvent("null"), null);
+  assert.equal(parseAntigravityEvent("not-json"), null);
+  assert.equal(parseAntigravityEvent(JSON.stringify({ event: "unknown" })), null);
+  assert.deepEqual(parseAntigravityEvent(JSON.stringify({ event: "unknown", conversation_id: "c-1" })), {
+    conversationId: "c-1",
+  });
 });
 
 // --- the fold, which is where the two conventions actually collide ----------

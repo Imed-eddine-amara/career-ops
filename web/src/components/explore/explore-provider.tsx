@@ -72,6 +72,9 @@ type ExploreCtx = {
   added: Set<string>;
   adding: Set<string>;
   discover: () => Promise<void>;
+  scannedCompaniesList: string[];
+  nextOffset?: number;
+  scanNextSlice: () => Promise<void>;
   /** Load the SUPPLY-loop offers Today's "Fresh matches this week" already
    *  fetched from /api/whats-new, straight into the results phase — no scan. */
   loadFresh: () => Promise<void>;
@@ -154,6 +157,8 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
   const [aiIntent, setAiIntent] = useState("");
   const [aiTrace, setAiTrace] = useState<AiTraceChunk[]>([]);
   const [aiCost, setAiCost] = useState<AiCost>({ searches: 0, candidates: 0, fetches: 0 });
+  const [scannedCompaniesList, setScannedCompaniesList] = useState<string[]>([]);
+  const [nextOffset, setNextOffset] = useState<number | undefined>(undefined);
   const runningRef = useRef(false);
   const runs = useRef(createRunOwner());
   const aiIntentRef = useRef(aiIntent);
@@ -172,9 +177,12 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
     setFiltersState(f);
   }, []);
 
-  const discover = useCallback(async () => {
+  const discover = useCallback(async (opts?: { append?: boolean; offset?: number }) => {
     if (runningRef.current) return;
-    const f = filtersRef.current;
+    const f = {
+      ...filtersRef.current,
+      ...(typeof opts?.offset === "number" ? { offset: opts.offset } : {}),
+    };
     if (f.preset === CHINA_PRESET && !f.employers?.length) return;
     const employer = f.preset === CHINA_PRESET;
     if (employer) {
@@ -184,8 +192,11 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
     runningRef.current = true;
     setPhase("casting");
     setEmployerOutcome(null);
-    setOffers([]);
-    setMatchCount(0);
+    if (!opts?.append) {
+      setOffers([]);
+      setMatchCount(0);
+      setScannedCompaniesList([]);
+    }
     setCompaniesScanned(0);
     setCompaniesAvailable(0);
     setCapHit(false);
@@ -201,7 +212,7 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
     // treats it as a navigation, which aborts this fetch — Discover flashed
     // empty and returned to the form. It is written once the run has settled.
 
-    const acc: DiscoveredOffer[] = [];
+    const acc: DiscoveredOffer[] = opts?.append ? [...offers] : [];
     let sawError = "";
     let aborted = false;
     let sawScannerMissing = false; // the structured 400 (data-only checkout), not a runtime scan error
@@ -248,6 +259,12 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
           if (ev.capHit) {
             capHitAcc = true;
             setCapHit(true);
+          }
+          if (Array.isArray(ev.scannedCompanies)) {
+            setScannedCompaniesList((prev) => Array.from(new Set([...prev, ...(ev.scannedCompanies || [])])));
+          }
+          if (typeof ev.nextOffset === "number") {
+            setNextOffset(ev.nextOffset);
           }
           const datasetIssue =
             (ev.datasetStatus ? Object.values(ev.datasetStatus).some((s) => s !== "ok") : false) ||
@@ -661,15 +678,23 @@ export function ExploreProvider({ children }: { children: React.ReactNode }) {
     }
   }, [phase, mode, offers, matchCount, companiesScanned, companiesAvailable, capHit, droppedNoDate, sources, partial, status, employerOutcome, error, scannerMissing, added, aiTrace, aiCost, aiIntent]);
 
+  const scanNextSlice = useCallback(async () => {
+    const currentOffset = nextOffset || ((filters.offset || 0) + filters.limitPerAts);
+    const updated = { ...filters, offset: currentOffset };
+    setFilters(updated);
+    await discover({ append: true, offset: currentOffset });
+  }, [nextOffset, filters, setFilters, discover]);
+
   const value = useMemo(
     () => ({
       filters, setFilters, initFilters, phase,
       running: phase === "casting" || phase === "scanning" || phase === "revealing" || phase === "hunting",
       offers, sources, matchCount, companiesScanned, companiesAvailable, capHit, droppedNoDate, status, employerOutcome, partial, error, scannerMissing, added, adding,
       discover, loadFresh, addToPipeline, applyPatch, reset,
+      scannedCompaniesList, nextOffset, scanNextSlice,
       mode, setMode, aiIntent, setAiIntent, discoverAI, aiTrace, aiCost,
     }),
-    [filters, setFilters, initFilters, phase, offers, sources, matchCount, companiesScanned, companiesAvailable, capHit, droppedNoDate, status, employerOutcome, partial, error, scannerMissing, added, adding, discover, loadFresh, addToPipeline, applyPatch, reset, mode, setMode, aiIntent, discoverAI, aiTrace, aiCost],
+    [filters, setFilters, initFilters, phase, offers, sources, matchCount, companiesScanned, companiesAvailable, capHit, droppedNoDate, status, employerOutcome, partial, error, scannerMissing, added, adding, discover, loadFresh, addToPipeline, applyPatch, reset, scannedCompaniesList, nextOffset, scanNextSlice, mode, setMode, aiIntent, discoverAI, aiTrace, aiCost],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

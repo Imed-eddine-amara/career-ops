@@ -1,5 +1,6 @@
 import { careerOpsRoot } from "@/lib/career-ops";
 import { ChatError, listChats, readChat, saveChat, deleteChat } from "@/lib/assistant-chat-store.mjs";
+import { deleteAssistantSession } from "@/lib/assistant-session-store.mjs";
 import { MAX_CHAT_BYTES } from "@/lib/assistant-history.mjs";
 
 export const runtime = "nodejs";
@@ -27,7 +28,9 @@ export async function PUT(req: Request) {
 export async function DELETE(req: Request) {
   try {
     const url = new URL(req.url);
-    deleteChat(careerOpsRoot(), url.searchParams.get("id"), Number(url.searchParams.get("revision")));
+    const id = url.searchParams.get("id");
+    deleteChat(careerOpsRoot(), id, Number(url.searchParams.get("revision")));
+    if (id) deleteAssistantSession(careerOpsRoot(), id);
     return Response.json({ ok: true });
   } catch (error) { return failure(error); }
 }

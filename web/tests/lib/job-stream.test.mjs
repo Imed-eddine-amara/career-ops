@@ -146,3 +146,21 @@ test("malformed gated events do not confirm a legitimate evaluation stop", async
     assert.equal(result.status, "error");
   }
 });
+
+test("an error event preserves conversationId, attempts and failureReason for retry affordance", async () => {
+  const errEv = {
+    type: "error",
+    msg: "Fact check failed: drift=developed",
+    conversationId: "conv-12345",
+    attempts: 5,
+    failureReason: "Fact check failed: drift=developed",
+  };
+  const { result } = await read([record(errEv)]);
+  assert.deepEqual(result, {
+    status: "error",
+    message: "Fact check failed: drift=developed",
+    conversationId: "conv-12345",
+    attempts: 5,
+    failureReason: "Fact check failed: drift=developed",
+  });
+});

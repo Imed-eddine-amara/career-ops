@@ -65,6 +65,26 @@ test("independent runs keep independent write guards", () => {
   assert.equal(second.releases(), 1);
 });
 
+test("setActiveChild switches finalizer to track new child process", () => {
+  const firstChild = new EventEmitter();
+  const secondChild = new EventEmitter();
+  let releases = 0;
+  const finish = createRunFinalizer(firstChild, () => { releases++; });
+
+  // First child closes after a failed attempt
+  firstChild.emit("close", 0);
+  assert.equal(releases, 0, "finish has not been called yet");
+
+  // Re-track with second child
+  finish.setActiveChild(secondChild);
+  finish(); // Client finished or stream completed, but second child is still active
+  assert.equal(releases, 0, "must not release while second child is still running");
+
+  // Second child completes
+  secondChild.emit("close", 0);
+  assert.equal(releases, 1, "releases once second child closes");
+});
+
 test("a real worker remains guarded while it finishes after cancellation", { timeout: 10_000 }, async (t) => {
   // IPC keeps the child alive without launching an AI CLI or touching user data.
   // It also lets this exercise the same lifetime on Windows and POSIX.

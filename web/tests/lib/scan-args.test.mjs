@@ -38,6 +38,10 @@ test("scannerArgs keeps the window, sources, cap and output mode Explore asked f
   );
   assert.deepEqual(
     scannerArgs({ ats: ["ashby"], json: true, sinceDays: 0, limitPerAts: 0 }),
+    ["--dry-run", "--since", "7", "--ats", "ashby", "--shuffle", "--json"],
+  );
+  assert.deepEqual(
+    scannerArgs({ ats: ["ashby"], json: true, sinceDays: 0 }),
     ["--dry-run", "--since", "7", "--ats", "ashby", "--limit", "150", "--shuffle", "--json"],
   );
 });
