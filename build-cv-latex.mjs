@@ -287,7 +287,7 @@ async function main() {
     PORTFOLIO_URL: portfolioUrl,
     PORTFOLIO_DISPLAY: escapeLatex(portfolioDisplay),
     PORTFOLIO_LINK: portfolioLink,
-    EDUCATION: buildEducation(payload.education),
+    EDUCATION: template.includes('Higher Institute of Computer Science and Multimedia of Gabès') ? '' : buildEducation(payload.education),
     EXPERIENCE: buildExperience(payload.experience),
     PROJECTS: buildProjects(payload.projects),
     AWARDS: buildAwards(payload.awards),
